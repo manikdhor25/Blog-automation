@@ -1,0 +1,16 @@
+{
+    "crons": [
+        {
+            "path": "/api/automation?task=publish",
+            "schedule": "*/15 * * * *"
+        },
+        {
+            "path": "/api/automation?task=rank_check",
+            "schedule": "0 6 * * *"
+        },
+        {
+            "path": "/api/automation?task=decay_scan",
+            "schedule": "0 0 * * 0"
+        }
+    ]
+}
