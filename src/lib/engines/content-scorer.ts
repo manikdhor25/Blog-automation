@@ -1,10 +1,11 @@
 // ============================================================
-// RankMaster Pro - 10-Dimension Content Scoring Engine
+// RankMaster Pro - 15-Dimension Content Scoring Engine
 // ============================================================
 
 import { ContentScore, ScoreDetail } from '../types';
 import { getAIRouter } from '../ai/router';
 import { createSingleton } from '../singleton';
+import { detectSearchIntent } from './content-utils';
 
 export class ContentScorer {
     // Main scoring function - analyzes content across 10 dimensions
@@ -63,6 +64,22 @@ export class ContentScorer {
         const serpCorrelation = this.scoreSERPCorrelated(content, targetKeyword, options?.competitorContents || []);
         details.push(serpCorrelation);
 
+        // 13. Passage-Level Scoring (#50) — are individual passages independently rankable?
+        const passage = this.scorePassageQuality(content);
+        details.push(passage);
+
+        // 14. Entity Saturation (#51) — are key entities present and properly referenced?
+        const entity = this.scoreEntitySaturation(content, targetKeyword);
+        details.push(entity);
+
+        // 15. GEO Citation Density (#52) — are claims properly attributed for AI extraction?
+        const citation = this.scoreCitationDensity(content);  
+        details.push(citation);
+
+        // 16. Format Diversity — visual variety of content elements
+        const formatDiv = this.scoreFormatDiversity(content);
+        details.push(formatDiv);
+
         const scores: ContentScore = {
             seo: seo.score,
             aeo: aeo.score,
@@ -76,26 +93,34 @@ export class ContentScorer {
             intent: intent.score,
             geo: geo.score,
             serpCorrelation: serpCorrelation.score,
+            passage: passage.score,
+            entitySaturation: entity.score,
+            citationDensity: citation.score,
+            formatDiversity: formatDiv.score,
             topicCoverage: (serpCorrelation as unknown as { topicCoverage?: number }).topicCoverage || 0,
             missingTopics: (serpCorrelation as unknown as { missingTopics?: string[] }).missingTopics || [],
             overall: 0,
             details,
         };
 
-        // Weighted average — 12 dimensions (SERP correlation added)
+        // Weighted average — 16 dimensions (rebalanced from 15)
         scores.overall = Math.round(
-            scores.seo * 0.09 +
-            scores.aeo * 0.10 +
-            scores.eeat * 0.12 +
-            scores.readability * 0.06 +
-            scores.snippet * 0.08 +
-            scores.schema * 0.08 +
-            scores.links * 0.08 +
-            scores.freshness * 0.05 +
-            scores.depth * 0.06 +
+            scores.seo * 0.07 +
+            scores.aeo * 0.08 +
+            scores.eeat * 0.09 +
+            scores.readability * 0.05 +
+            scores.snippet * 0.07 +
+            scores.schema * 0.05 +
+            scores.links * 0.05 +
+            scores.freshness * 0.04 +
+            scores.depth * 0.05 +
             scores.intent * 0.05 +
-            scores.geo * 0.10 +
-            scores.serpCorrelation * 0.13
+            scores.geo * 0.09 +
+            scores.serpCorrelation * 0.09 +
+            scores.passage * 0.07 +
+            scores.entitySaturation * 0.05 +
+            scores.citationDensity * 0.05 +
+            scores.formatDiversity * 0.05
         );
 
         return scores;
@@ -131,20 +156,24 @@ export class ContentScorer {
             suggestions.push('Include keyword naturally in your introduction');
         }
 
-        // Keyword density (0.5-1.5% ideal — above 1.5% risks over-optimization penalties)
+        // PA-2 FIX: Keyword density (0.8-1.5% ideal — aligned with prompt instruction)
+        // Below 0.8% gets partial credit, below 0.5% is too low
         // Use plain text (HTML stripped) for accurate density calculation
         const wordCount = plainText.split(/\s+/).filter(w => w.length > 0).length;
         const keywordCount = (plainLower.match(new RegExp(lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
         const density = (keywordCount / wordCount) * 100;
 
-        if (density >= 0.5 && density <= 1.5) {
+        if (density >= 0.8 && density <= 1.5) {
             score += 15;
+        } else if (density >= 0.5 && density < 0.8) {
+            score += 10; // Partial credit — slightly under ideal
+            suggestions.push(`Keyword density (${density.toFixed(1)}%) is below ideal — aim for 0.8-1.5%`);
         } else if (density < 0.5) {
             issues.push(`Keyword density too low (${density.toFixed(1)}%)`);
             suggestions.push('Use keyword more naturally throughout the content');
         } else if (density <= 2.5) {
             score += 8; // Slightly above ideal — not penalized but not optimal
-            suggestions.push(`Keyword density (${density.toFixed(1)}%) is slightly high — aim for 0.5-1.5%`);
+            suggestions.push(`Keyword density (${density.toFixed(1)}%) is slightly high — aim for 0.8-1.5%`);
         } else {
             issues.push(`Keyword density too high (${density.toFixed(1)}%) — over-optimization risk`);
             suggestions.push('Reduce keyword usage and use synonyms/LSI terms instead');
@@ -428,6 +457,7 @@ export class ContentScorer {
         const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
         const words = text.split(/\s+/).filter(w => w.length > 0);
         const syllables = words.reduce((count, word) => count + this.countSyllables(word), 0);
+        const sentenceLengths = sentences.map(s => s.trim().split(/\s+/).filter(w => w.length > 0).length);
 
         const avgSentenceLength = words.length / Math.max(sentences.length, 1);
         const avgSyllablesPerWord = syllables / Math.max(words.length, 1);
@@ -437,13 +467,14 @@ export class ContentScorer {
 
         // Detect intent type from keyword for target calibration
         const lowerKeyword = (keyword || '').toLowerCase();
-        const isCommercial = /best|top|review|vs|compare|alternative/i.test(lowerKeyword);
+        const searchIntent = detectSearchIntent(keyword || '');
+        // isTechnical is orthogonal to search intent — it's a topic complexity signal
         const isTechnical = /api|code|algorithm|implementation|architecture|config/i.test(lowerKeyword);
 
         let targetMin: number, targetMax: number, audienceLabel: string;
         if (isTechnical) {
             targetMin = 40; targetMax = 55; audienceLabel = 'technical audience (Flesch 40-55)';
-        } else if (isCommercial) {
+        } else if (searchIntent === 'commercial') {
             targetMin = 50; targetMax = 65; audienceLabel = 'commercial intent (Flesch 50-65)';
         } else {
             targetMin = 55; targetMax = 75; audienceLabel = 'general audience (Flesch 55-75)';
@@ -479,8 +510,27 @@ export class ContentScorer {
         }
 
         // Bonus for transition words (improves readability flow)
-        const transitions = (text.match(/\b(however|therefore|furthermore|moreover|additionally|meanwhile|consequently|alternatively|specifically|for example|in contrast|as a result)\b/gi) || []).length;
+        // NOTE: excluded "furthermore", "moreover", "additionally" — they're banned by the humanizer
+        const transitions = (text.match(/\b(however|therefore|meanwhile|specifically|for example|in contrast|as a result|on the other hand|that said|in other words|for instance|to illustrate|put simply|here's the thing|the key point is)\b/gi) || []).length;
         if (transitions >= 5) score = Math.min(score + 5, maxScore);
+
+        // MI-5: Sentence length variation metric — high variation = more natural writing
+        if (sentenceLengths.length >= 5) {
+            const mean = sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length;
+            const variance = sentenceLengths.reduce((sum, len) => sum + Math.pow(len - mean, 2), 0) / sentenceLengths.length;
+            const stdDev = Math.sqrt(variance);
+            const coeffOfVariation = mean > 0 ? stdDev / mean : 0;
+
+            if (coeffOfVariation >= 0.4) {
+                // Good variation — sentences feel naturally diverse
+                score = Math.min(score + 5, maxScore);
+            } else if (coeffOfVariation < 0.2) {
+                // Very monotone — all sentences roughly same length (AI pattern)
+                issues.push(`Sentence length variation is too low (CV: ${coeffOfVariation.toFixed(2)}) — feels robotic`);
+                suggestions.push('Mix short punchy sentences (5-8 words) with medium sentences (15-20 words) for natural rhythm');
+                score = Math.max(score - 5, 0);
+            }
+        }
 
         return { dimension: 'Readability', score: Math.round(Math.min(score, maxScore)), maxScore, issues, suggestions };
     }
@@ -710,26 +760,22 @@ export class ContentScorer {
         let score = 30; // C3 FIX: base lowered from 50 — score should be earned
         const maxScore = 100;
 
-        const lowerKeyword = keyword.toLowerCase();
+        // Use unified intent detection
+        const intent = detectSearchIntent(keyword);
 
-        // Detect intent type
-        const isInformational = /^(what|how|why|when|where|who|guide|tutorial|tips|learn)/i.test(lowerKeyword);
-        const isCommercial = /best|top|review|vs|compare|alternative/i.test(lowerKeyword);
-        const isTransactional = /buy|price|deal|discount|coupon|cheap|order/i.test(lowerKeyword);
-
-        if (isInformational) {
+        if (intent === 'informational') {
             // Should have educational content, definitions, examples
             if (content.toLowerCase().includes('example') || content.toLowerCase().includes('for instance')) score += 15;
             if (content.match(/<h[2-3][^>]*>[^<]*\?[^<]*<\/h[2-3]>/gi)) score += 15;
             if (content.includes('<ol') || content.includes('<ul')) score += 10;
             if ((content.match(/<h[2-6][^>]*>/gi) || []).length >= 5) score += 10;
-        } else if (isCommercial) {
+        } else if (intent === 'commercial') {
             // Should have comparisons, pros/cons, ratings
             if (content.includes('<table')) score += 15;
             if (content.toLowerCase().includes('pros') || content.toLowerCase().includes('cons')) score += 15;
             if (content.toLowerCase().includes('recommend') || content.toLowerCase().includes('winner')) score += 10;
             if (content.toLowerCase().includes('price') || content.toLowerCase().includes('cost')) score += 10;
-        } else if (isTransactional) {
+        } else if (intent === 'transactional') {
             // Should have CTA, pricing, links to buy
             if (content.toLowerCase().includes('buy') || content.toLowerCase().includes('get started')) score += 15;
             if (content.toLowerCase().includes('price')) score += 15;
@@ -834,10 +880,10 @@ export class ContentScorer {
         const prompt = `You are an expert SEO analyst. Analyze this content targeting the keyword "${keyword}".
 
 Content to analyze:
-${content.substring(0, 3000)}
+${content.substring(0, 6000)}
 
 Top competitor content summaries:
-${competitorContents.map((c, i) => `Competitor ${i + 1}: ${c.substring(0, 500)}`).join('\n\n')}
+${competitorContents.map((c, i) => `Competitor ${i + 1}: ${c.substring(0, 800)}`).join('\n\n')}
 
 Provide:
 1. A brief analysis of strengths and weaknesses vs competitors
@@ -1124,7 +1170,7 @@ Format as JSON: { "analysis": "...", "suggestions": ["...", "..."] }`;
     }> {
         try {
             const ai = getAIRouter();
-            const textSample = content.replace(/<[^>]*>/g, ' ').slice(0, 3000);
+            const textSample = content.replace(/<[^>]*>/g, ' ').slice(0, 6000); // CT-1 FIX: increased from 3000
 
             const prompt = `Analyze this content for the keyword "${keyword}". Extract:
 1. Named entities (people, organizations, products, locations, concepts)
@@ -1156,6 +1202,306 @@ Respond with JSON:
         } catch {
             return { entities: [], topicCoverage: 0, missingTopics: [] };
         }
+    }
+
+    // ── 13. Passage-Level Quality (#50) ────────────────────────────
+    // Scores how well individual passages can rank independently
+    private scorePassageQuality(content: string): ScoreDetail {
+        const issues: string[] = [];
+        const suggestions: string[] = [];
+        let score = 0;
+        const plainContent = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // Extract paragraphs
+        const paragraphs = content.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || [];
+        const h2Sections = content.split(/<h2[^>]*>/gi);
+
+        // Check: self-contained opening paragraphs after H2s
+        let selfContainedCount = 0;
+        let totalH2Paras = 0;
+
+        for (let i = 1; i < h2Sections.length; i++) { // Skip content before first H2
+            const firstPara = h2Sections[i].match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+            if (!firstPara) continue;
+
+            totalH2Paras++;
+            const paraText = firstPara[1].replace(/<[^>]+>/g, '').trim();
+            const words = paraText.split(/\s+/).length;
+            const startsWithAnaphora = /^(this|these|that|those|it|they|such|as mentioned|as discussed)\b/i.test(paraText);
+
+            if (words >= 30 && words <= 70 && !startsWithAnaphora) {
+                selfContainedCount++;
+            }
+        }
+
+        // Score self-contained paragraphs (0-40)
+        if (totalH2Paras > 0) {
+            const ratio = selfContainedCount / totalH2Paras;
+            score += Math.round(ratio * 40);
+            if (ratio < 0.5) {
+                issues.push(`Only ${selfContainedCount}/${totalH2Paras} H2 sections have self-contained opening paragraphs`);
+                suggestions.push('Rewrite opening paragraphs to be 40-60 words, self-contained, no anaphoric references');
+            }
+        } else {
+            score += 20; // Default if no H2s found
+        }
+
+        // Check: No consecutive paragraphs starting with same word (0-20)
+        let sameStartCount = 0;
+        for (let i = 1; i < paragraphs.length; i++) {
+            const prev = paragraphs[i - 1].replace(/<[^>]+>/g, '').trim().split(/\s+/)[0]?.toLowerCase();
+            const curr = paragraphs[i].replace(/<[^>]+>/g, '').trim().split(/\s+/)[0]?.toLowerCase();
+            if (prev && curr && prev === curr) sameStartCount++;
+        }
+        const uniqueStartsScore = Math.max(0, 20 - sameStartCount * 4);
+        score += uniqueStartsScore;
+        if (sameStartCount > 2) {
+            issues.push(`${sameStartCount} consecutive paragraphs start with the same word`);
+            suggestions.push('Vary paragraph openings for better passage diversity');
+        }
+
+        // Check: Active voice prevalence (0-20)
+        const passivePatterns = plainContent.match(/\b(is|are|was|were|been|being)\s+(being\s+)?\w+ed\b/gi) || [];
+        const passiveRatio = plainContent.split(/\s+/).length > 0
+            ? passivePatterns.length / (plainContent.split(/\s+/).length / 100)
+            : 0;
+        const activeScore = Math.max(0, 20 - Math.round(passiveRatio * 5));
+        score += activeScore;
+        if (passiveRatio > 2) {
+            issues.push(`High passive voice usage (${passivePatterns.length} instances)`);
+            suggestions.push('Convert passive constructions to active voice for clearer passages');
+        }
+
+        // Check: Paragraph length variation (0-20)
+        const paraLengths = paragraphs.map(p => p.replace(/<[^>]+>/g, '').split(/\s+/).length);
+        if (paraLengths.length >= 3) {
+            const stdDev = this.calculateStdDev(paraLengths);
+            const variationScore = Math.min(20, Math.round(stdDev / 2));
+            score += variationScore;
+            if (stdDev < 5) {
+                suggestions.push('Vary paragraph lengths more — mix short (2-3 sentences) with longer (4-5 sentences)');
+            }
+        } else {
+            score += 10;
+        }
+
+        return {
+            dimension: 'Passage Quality',
+            score: Math.min(100, score),
+            maxScore: 100,
+            issues,
+            suggestions,
+        };
+    }
+
+    // ── 14. Entity Saturation (#51) ────────────────────────────────
+    // Scores named entity coverage and proper references
+    private scoreEntitySaturation(content: string, keyword: string): ScoreDetail {
+        const issues: string[] = [];
+        const suggestions: string[] = [];
+        let score = 0;
+        const plainContent = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const wordCount = plainContent.split(/\s+/).length;
+
+        // Count named entities (proper nouns, organization names, etc.)
+        const namedEntities = plainContent.match(
+            /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b/g
+        ) || [];
+        // De-duplicate
+        const uniqueEntities = new Set(namedEntities.filter(e => e.length > 3));
+        const entityDensity = wordCount > 0 ? (uniqueEntities.size / wordCount) * 1000 : 0;
+
+        // Entity count score (0-30) — target: 5+ per 1000 words
+        const entityCountScore = Math.min(30, Math.round(entityDensity * 6));
+        score += entityCountScore;
+        if (uniqueEntities.size < 5) {
+            issues.push(`Only ${uniqueEntities.size} unique entities found`);
+            suggestions.push('Add named references to people, organizations, products, and technologies');
+        }
+
+        // "Is-a" definition count (0-25) — target: 3+ definitions
+        const definitionPatterns = plainContent.match(
+            /\b[\w\s]+ (?:is|are|refers to|can be defined as) (?:a|an|the) [\w\s]+/gi
+        ) || [];
+        const defScore = Math.min(25, definitionPatterns.length * 8);
+        score += defScore;
+        if (definitionPatterns.length < 2) {
+            issues.push(`Only ${definitionPatterns.length} "is-a" definitions found`);
+            suggestions.push('Add clear definitions: "[Term] is [definition]" for key concepts');
+        }
+
+        // Expert/authority references (0-25) — target: 2+ expert quotes
+        const expertPatterns = plainContent.match(
+            /(?:CEO|CTO|Director|Professor|Dr\.|Head of|Chief|Founder|Analyst|Expert|Researcher)\s/gi
+        ) || [];
+        const expertScore = Math.min(25, expertPatterns.length * 8);
+        score += expertScore;
+        if (expertPatterns.length < 2) {
+            suggestions.push('Add expert references with titles and organizations for EEAT signals');
+        }
+
+        // Keyword entity prominence (0-20) — keyword mentioned in entity context
+        const keywordInEntity = plainContent.match(
+            new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+        ) || [];
+        const prominenceScore = Math.min(20, keywordInEntity.length * 3);
+        score += prominenceScore;
+
+        return {
+            dimension: 'Entity Saturation',
+            score: Math.min(100, score),
+            maxScore: 100,
+            issues,
+            suggestions,
+        };
+    }
+
+    // ── 15. GEO Citation Density (#52) ─────────────────────────────
+    // Scores how well claims are attributed for AI engine extraction
+    private scoreCitationDensity(content: string): ScoreDetail {
+        const issues: string[] = [];
+        const suggestions: string[] = [];
+        let score = 0;
+        const plainContent = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const wordCount = plainContent.split(/\s+/).length;
+
+        // Count attribution patterns
+        const attributionPatterns = [
+            /according to [\w\s]+/gi,
+            /research (?:from|by|published in) [\w\s]+/gi,
+            /(?:a|the) \d{4} (?:study|report|survey|analysis)/gi,
+            /[\w\s]+ (?:found|shows?|reveals?|indicates?|suggests?|reports?) that/gi,
+            /\([\w\s,]+,?\s*\d{4}\)/g,  // Inline citations
+            /data from [\w\s]+/gi,
+        ];
+
+        let totalAttributions = 0;
+        for (const pattern of attributionPatterns) {
+            const matches = plainContent.match(pattern);
+            if (matches) totalAttributions += matches.length;
+        }
+
+        // Citation density per 1000 words
+        const densityPer1000 = wordCount > 0 ? (totalAttributions / wordCount) * 1000 : 0;
+
+        // Density score (0-35) — target: 2.5+ per 1000 words
+        const densityScore = Math.min(35, Math.round(densityPer1000 * 14));
+        score += densityScore;
+        if (densityPer1000 < 1.5) {
+            issues.push(`Low citation density: ${densityPer1000.toFixed(1)} per 1000 words (target: 2.5+)`);
+            suggestions.push('Add inline attributions: "Research from [Source] shows..."');
+        }
+
+        // Year recency in citations (0-20) — recent data preferred
+        const currentYear = new Date().getFullYear();
+        const recentYears = plainContent.match(
+            new RegExp(`\\b(${currentYear}|${currentYear - 1})\\b`, 'g')
+        ) || [];
+        const recencyScore = Math.min(20, recentYears.length * 5);
+        score += recencyScore;
+        if (recentYears.length < 2) {
+            suggestions.push(`Add recent ${currentYear}/${currentYear - 1} data references for freshness signals`);
+        }
+
+        // Diversity of attribution styles (0-20)
+        let stylesUsed = 0;
+        for (const pattern of attributionPatterns) {
+            if (pattern.test(plainContent)) stylesUsed++;
+        }
+        const diversityScore = Math.min(20, stylesUsed * 5);
+        score += diversityScore;
+        if (stylesUsed < 3) {
+            suggestions.push('Vary citation styles: parenthetical, inline, "according to", "data from"');
+        }
+
+        // Orphaned stats check (0-25) — statistics without attribution
+        const statPatterns = plainContent.match(/\d+(?:\.\d+)?%/g) || [];
+        const attributedStats = plainContent.match(/\d+(?:\.\d+)?%[^.]*(?:according|source|study|report|research|\(\w)/gi) || [];
+        const orphanedStats = statPatterns.length - attributedStats.length;
+        const orphanScore = Math.max(0, 25 - orphanedStats * 5);
+        score += orphanScore;
+        if (orphanedStats > 2) {
+            issues.push(`${orphanedStats} statistics without attribution`);
+            suggestions.push('Add source citations to all percentage/number claims');
+        }
+
+        return {
+            dimension: 'Citation Density',
+            score: Math.min(100, score),
+            maxScore: 100,
+            issues,
+            suggestions,
+        };
+    }
+
+    // Helper: Standard deviation for length variation scoring
+    private calculateStdDev(values: number[]): number {
+        if (values.length < 2) return 0;
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const squareDiffs = values.map(v => Math.pow(v - mean, 2));
+        return Math.sqrt(squareDiffs.reduce((a, b) => a + b, 0) / values.length);
+    }
+
+    // ── 16. Format Diversity Scoring ──────────────────────────────
+    // Measures visual variety: callouts, pull quotes, stat highlights, etc.
+    private scoreFormatDiversity(content: string): ScoreDetail {
+        let score = 0;
+        const issues: string[] = [];
+        const suggestions: string[] = [];
+
+        // Count each rich format type
+        const formats: Record<string, number> = {
+            callouts: (content.match(/class="callout-(?:tip|warning|info|note)/gi) || []).length,
+            pullQuotes: (content.match(/class="pull-quote/gi) || []).length,
+            statHighlights: (content.match(/class="stat-highlight/gi) || []).length,
+            definitionLists: (content.match(/<dl/gi) || []).length,
+            codeBlocks: (content.match(/class="code-block-wrapper/gi) || []).length,
+            accordions: (content.match(/class="accordion-faq/gi) || []).length,
+            footnotes: (content.match(/class="footnotes-section/gi) || []).length,
+            responsiveTables: (content.match(/class="responsive-table-wrapper/gi) || []).length,
+            nestedLists: (content.match(/<[ou]l[^>]*>\s*<li[^>]*>[\s\S]*?<[ou]l/gi) || []).length,
+            semanticElements: (content.match(/<(?:figure|aside|abbr|time|mark)\b/gi) || []).length,
+        };
+
+        const activeTypes = Object.entries(formats).filter(([, count]) => count > 0);
+        const activeCount = activeTypes.length;
+
+        // Scoring: 10 points per active format type, up to 100
+        // Bonus: callouts get extra weight (they're the highest-impact element)
+        score += Math.min(activeCount * 12, 60); // Up to 60 for variety
+
+        // Callouts (high impact)
+        if (formats.callouts >= 2) score += 15;
+        else if (formats.callouts >= 1) score += 8;
+        else { issues.push('No callout boxes found'); suggestions.push('Add 2+ callout boxes (tip, warning, note, info) for visual breaks'); }
+
+        // Pull quotes or stat highlights (engagement elements)
+        if (formats.pullQuotes >= 1 || formats.statHighlights >= 1) score += 10;
+        else { suggestions.push('Add a pull quote or stat highlight for visual engagement'); }
+
+        // Accordion FAQ
+        if (formats.accordions >= 1) score += 10;
+
+        // Responsive tables
+        if (formats.responsiveTables >= 1) score += 5;
+
+        score = Math.min(score, 100);
+
+        // Generate issues for missing elements
+        if (activeCount < 3) {
+            issues.push(`Only ${activeCount} format types used — articles look flat without visual variety`);
+        }
+        if (activeCount < 5) {
+            suggestions.push(`Using ${activeCount}/10 format types. Target: 5+ for rich visual diversity.`);
+        }
+
+        return {
+            dimension: 'Format Diversity',
+            score: Math.min(score, 100),
+            maxScore: 100,
+            issues,
+            suggestions,
+        };
     }
 }
 

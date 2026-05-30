@@ -66,9 +66,26 @@
   to { opacity: 0; transform: translateX(60px) scale(0.95); }
 }
 
+@keyframes toastProgress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
 /* --- Staggered entrance --- */
 .animate-in { animation: slideUp 0.5s ease forwards; opacity: 0; }
 .animate-delay-1 { animation-delay: 0.1s; }
 .animate-delay-2 { animation-delay: 0.2s; }
 .animate-delay-3 { animation-delay: 0.3s; }
 .animate-delay-4 { animation-delay: 0.4s; }
+
+/* --- Extra text size --- */
+.text-xs { font-size: 0.7rem; }
+
+/* --- Accessibility: Reduced motion --- */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none; opacity: 1; }
+  .stat-card, .card, .btn, .nav-item { transition: none; }
+  .spinner { animation-duration: 2s; }
+  .loading-skeleton, .skeleton { animation: none; }
+}
+

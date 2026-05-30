@@ -1,6 +1,7 @@
 // ============================================================
 // RankMaster Pro - Content Records API
-// GET: List with filters/pagination, DELETE: Remove records
+// GET: List with filters/pagination, DELETE: Remove records,
+// PATCH: Update a single record
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -106,6 +107,52 @@ export async function DELETE(request: NextRequest) {
     } catch (error) {
         return NextResponse.json(
             { error: error instanceof Error ? error.message : 'Failed to delete records' },
+            { status: 500 }
+        );
+    }
+}
+
+export async function PATCH(request: NextRequest) {
+    try {
+        const auth = await getAuthUser();
+        if (auth.error) return auth.error;
+
+        const body = await request.json();
+        const { id, title, keyword, meta_title, meta_description, publish_status, content_type, slug, content_html } = body;
+
+        if (!id) {
+            return NextResponse.json({ error: 'id is required' }, { status: 400 });
+        }
+
+        // Build update object with only provided fields
+        const updateObj: Record<string, string> = {};
+        if (title != null) updateObj.title = title;
+        if (keyword != null) updateObj.keyword = keyword;
+        if (meta_title != null) updateObj.meta_title = meta_title;
+        if (meta_description != null) updateObj.meta_description = meta_description;
+        if (publish_status != null) updateObj.publish_status = publish_status;
+        if (content_type != null) updateObj.content_type = content_type;
+        if (slug != null) updateObj.slug = slug;
+        if (content_html != null) updateObj.content_html = content_html;
+
+        if (Object.keys(updateObj).length === 0) {
+            return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+        }
+
+        const { data, error } = await auth.supabase
+            .from('content_records')
+            .update(updateObj)
+            .eq('id', id)
+            .eq('user_id', auth.user.id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        return NextResponse.json({ record: data });
+    } catch (error) {
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Failed to update record' },
             { status: 500 }
         );
     }

@@ -53,6 +53,19 @@ const LANGUAGES = [
     { code: 'ru', label: 'Russian' },
 ];
 
+const CONTENT_TYPES = [
+    { value: 'article', label: '📝 Standard Article', desc: 'General SEO-optimized article' },
+    { value: 'review', label: '⭐ Product Review', desc: 'Deep review with pros/cons, verdict score' },
+    { value: 'listicle', label: '📋 Best-X Listicle', desc: 'Ranked "Best 10..." product list' },
+    { value: 'how_to', label: '🔧 How-To / Tutorial', desc: 'Step-by-step tutorial guide' },
+    { value: 'comparison', label: '⚔️ VS / Comparison', desc: 'Head-to-head feature battle' },
+    { value: 'alternatives', label: '🔄 Alternatives', desc: '"Best [X] Alternatives" format' },
+    { value: 'beginner_guide', label: '🎓 Beginner Guide', desc: 'Comprehensive intro for newcomers' },
+    { value: 'problem_solution', label: '💡 Problem-Solution', desc: 'Address pain point with solutions' },
+    { value: 'case_study', label: '📊 Case Study', desc: 'Real usage experience with data' },
+    { value: 'news', label: '📰 Trends / News', desc: 'Timely industry updates' },
+];
+
 export default function CreateContentPage() {
     const toast = useToast();
     const [sites, setSites] = useState<Site[]>([]);
@@ -61,6 +74,7 @@ export default function CreateContentPage() {
     const [step, setStep] = useState<FlowStep>('input');
     const [stage, setStage] = useState('');
     const [language, setLanguage] = useState('en');
+    const [contentType, setContentType] = useState('article');
     const [streamingPreview, setStreamingPreview] = useState('');
 
     // Outline state
@@ -82,6 +96,7 @@ export default function CreateContentPage() {
     const [isEditing, setIsEditing] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [queueSaving, setQueueSaving] = useState(false);
+    const [costReport, setCostReport] = useState<any>(null);
 
     useEffect(() => {
         fetch('/api/sites').then(r => r.json()).then(d => setSites(d.sites || []));
@@ -100,7 +115,7 @@ export default function CreateContentPage() {
             const res = await fetch('/api/content/outline', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keyword, niche: site?.niche || '' }),
+                body: JSON.stringify({ keyword, niche: site?.niche || '', content_type: contentType !== 'article' ? contentType : undefined }),
             });
             if (!res.ok) throw new Error((await res.json()).error || 'Outline failed');
             const data = await res.json();
@@ -123,6 +138,7 @@ export default function CreateContentPage() {
         setStep('generating');
         setResult(null);
         setStreamingPreview('');
+        setCostReport(null);
 
         try {
             // Try SSE streaming first
@@ -130,7 +146,14 @@ export default function CreateContentPage() {
             const res = await fetch('/api/content/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keyword, site_id: selectedSite || undefined, language }),
+                body: JSON.stringify({
+                    keyword,
+                    site_id: selectedSite || undefined,
+                    language,
+                    content_type: contentType !== 'article' ? contentType : undefined,
+                    // Pass existing outline to skip regeneration (saves API calls)
+                    existing_outline: outline || undefined,
+                }),
             });
 
             if (!res.ok || !res.body) {
@@ -142,63 +165,124 @@ export default function CreateContentPage() {
             const decoder = new TextDecoder();
             let buffer = '';
             let preview = '';
+            let completed = false;
+
+            // Process SSE events properly: accumulate until \n\n boundary
+            const processSSEEvent = (eventBlock: string) => {
+                let eventType = '';
+                let dataStr = '';
+
+                for (const line of eventBlock.split('\n')) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.slice(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        // Accumulate data lines (large payloads may span multiple data: lines)
+                        dataStr += (dataStr ? '\n' : '') + line.slice(6);
+                    }
+                }
+
+                if (!dataStr) return;
+
+                let data;
+                try {
+                    data = JSON.parse(dataStr);
+                } catch {
+                    console.warn('[SSE] Failed to parse data for event:', eventType, 'length:', dataStr.length);
+                    return;
+                }
+
+                // Route by event type first (reliable), then fall back to property-based detection
+                switch (eventType) {
+                    case 'stage':
+                    case '': {
+                        if (data.stage) {
+                            const stageIcons: Record<string, string> = {
+                                research: '🔍', extracting: '📊', blueprint: '🧠',
+                                outline: '📋', writing: '✍️', expanding: '📝',
+                                optimizing: '⚡', competitors: '📊', analysis: '🧠',
+                            };
+                            setStage(`${stageIcons[data.stage] || '🔄'} ${data.message}`);
+                        }
+                        break;
+                    }
+                    case 'competitor_insight':
+                        // Progress update — no action needed on the UI
+                        break;
+                    case 'outline':
+                        setStage('📋 Outline ready, writing sections...');
+                        break;
+                    case 'content_raw':
+                        preview = data.content || '';
+                        setStreamingPreview(preview);
+                        break;
+                    case 'quality_gate':
+                        setStage('🔬 Running quality checks...');
+                        break;
+                    case 'complete':
+                        setResult(data);
+                        setCostReport(data.costReport || null);
+                        setEditedContent(data.content?.content || preview);
+                        setEditedTitle(data.content?.title || keyword.replace(/\b\w/g, (l: string) => l.toUpperCase()));
+                        setStep('result');
+                        setStage('');
+                        completed = true;
+                        return;
+                    case 'error':
+                        throw new Error(data.message || 'Stream error');
+                    default:
+                        // Fallback: property-based detection for untyped events
+                        if (data.score && data.content && typeof data.content === 'object') {
+                            // Looks like a complete event without the event: label
+                            setResult(data);
+                            setEditedContent(data.content?.content || preview);
+                            setEditedTitle(data.content?.title || keyword.replace(/\b\w/g, (l: string) => l.toUpperCase()));
+                            setStep('result');
+                            setStage('');
+                            completed = true;
+                        } else if (data.stage) {
+                            setStage(`🔄 ${data.message || data.stage}`);
+                        } else if (data.message && !data.stage) {
+                            throw new Error(data.message);
+                        }
+                        break;
+                }
+            };
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
                 buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) {
-                        // Store event type for next data line
-                        continue;
-                    }
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.slice(6));
-                            // Parse SSE events
-                            if (data.stage) {
-                                const stageIcons: Record<string, string> = {
-                                    research: '🔍', competitors: '📊', analysis: '🧠',
-                                    writing: '✍️', optimizing: '⚡',
-                                };
-                                setStage(`${stageIcons[data.stage] || '🔄'} ${data.message}`);
-                            } else if (data.text) {
-                                preview += data.text;
-                                setStreamingPreview(preview);
-                            } else if (data.done !== undefined || data.score) {
-                                // Complete event — set final result (must be checked BEFORE data.content
-                                // because the complete event also has a content object)
-                                setResult(data);
-                                setEditedContent(data.content?.content || preview);
-                                setEditedTitle(data.content?.title || keyword.replace(/\b\w/g, (l: string) => l.toUpperCase()));
-                                setStep('result');
-                                setStage('');
-                                return;
-                            } else if (data.content && typeof data.content === 'string') {
-                                // Raw content arrived (content_raw event sends content as a string)
-                                preview = data.content;
-                                setStreamingPreview(preview);
-                            } else if (data.message && !data.stage) {
-                                // Error
-                                throw new Error(data.message);
-                            }
-                        } catch (e) {
-                            if (e instanceof SyntaxError) continue;
-                            throw e;
-                        }
-                    }
+                // SSE events are delimited by \n\n — split on double-newline
+                const events = buffer.split('\n\n');
+                // Last element may be incomplete — keep it in buffer
+                buffer = events.pop() || '';
+
+                for (const eventBlock of events) {
+                    const trimmed = eventBlock.trim();
+                    if (!trimmed) continue;
+                    processSSEEvent(trimmed);
+                    if (completed) return;
                 }
             }
 
+            // Process any remaining data in buffer
+            if (buffer.trim()) {
+                processSSEEvent(buffer.trim());
+                if (completed) return;
+            }
+
             // If we got here without a complete event, use the preview
-            if (preview && !result) {
+            if (preview && !completed) {
+                console.warn('[SSE] Stream ended without complete event — using preview content');
                 setEditedContent(preview);
                 setEditedTitle(keyword.replace(/\b\w/g, (l: string) => l.toUpperCase()));
                 setStep('result');
+            } else if (!completed) {
+                // Stream ended with nothing — fallback
+                console.warn('[SSE] Stream ended with no content — falling back to non-streaming');
+                return await handleGenerateFallback();
             }
         } catch (error) {
             console.warn('Streaming failed, trying fallback:', error);
@@ -219,7 +303,13 @@ export default function CreateContentPage() {
         const res = await fetch('/api/content/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keyword, site_id: selectedSite || undefined, language }),
+            body: JSON.stringify({
+                keyword,
+                site_id: selectedSite || undefined,
+                language,
+                content_type: contentType !== 'article' ? contentType : undefined,
+                existing_outline: outline || undefined,
+            }),
         });
         if (!res.ok) throw new Error((await res.json()).error || 'Generation failed');
         setStage('✅ Content generated!');
@@ -355,6 +445,35 @@ export default function CreateContentPage() {
                                 <select className="form-select" value={language} onChange={e => setLanguage(e.target.value)} style={{ padding: '14px' }}>
                                     {LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
                                 </select>
+                            </div>
+                        </div>
+                        <div className="form-group" style={{ margin: '0 0 16px 0' }}>
+                            <label className="form-label">Content Type</label>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+                                {CONTENT_TYPES.map(ct => (
+                                    <button
+                                        key={ct.value}
+                                        type="button"
+                                        onClick={() => setContentType(ct.value)}
+                                        style={{
+                                            padding: '10px 8px',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: contentType === ct.value ? '2px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+                                            background: contentType === ct.value ? 'var(--gradient-glow)' : 'var(--bg-glass)',
+                                            cursor: 'pointer',
+                                            textAlign: 'center',
+                                            transition: 'all 0.2s',
+                                            fontSize: '0.8rem',
+                                            lineHeight: 1.3,
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '1rem', marginBottom: 2 }}>{ct.label.split(' ')[0]}</div>
+                                        <div style={{ fontWeight: contentType === ct.value ? 700 : 500, color: contentType === ct.value ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                                            {ct.label.split(' ').slice(1).join(' ')}
+                                        </div>
+                                        <div className="text-muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>{ct.desc}</div>
+                                    </button>
+                                ))}
                             </div>
                         </div>
                         <div className="flex gap-3">
@@ -701,6 +820,90 @@ export default function CreateContentPage() {
                                 </div>
                             </div>
                         </div>
+
+                        {/* AI Cost Report */}
+                        {costReport && (
+                            <div className="card" style={{ marginBottom: 24 }}>
+                                <div className="card-header">
+                                    <h2 className="card-title">💰 AI Cost Report</h2>
+                                    <Badge variant="info">${costReport.totalCost?.toFixed(2)}</Badge>
+                                </div>
+                                <div className="grid-3" style={{ gap: 12, marginBottom: 16 }}>
+                                    <div style={{ padding: '12px 16px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Total Cost</div>
+                                        <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent-primary-light)' }}>${costReport.totalCost?.toFixed(2)}</div>
+                                    </div>
+                                    <div style={{ padding: '12px 16px', background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.15)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">AI Calls</div>
+                                        <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent-success)' }}>{costReport.totalCalls?.toLocaleString()}</div>
+                                    </div>
+                                    <div style={{ padding: '12px 16px', background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.15)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                                        <div className="text-sm text-muted">Tokens Used</div>
+                                        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent-warning)' }}>{costReport.totalTokensIn?.toLocaleString()} in / {costReport.totalTokensOut?.toLocaleString()} out</div>
+                                    </div>
+                                </div>
+                                {costReport.byModel?.length > 0 && (
+                                    <div style={{ marginBottom: 16 }}>
+                                        <div className="text-sm" style={{ fontWeight: 600, marginBottom: 8 }}>Cost by Model</div>
+                                        <div style={{ borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: 'var(--bg-glass)' }}>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Model</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Provider</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Calls</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Tokens In</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Tokens Out</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Cost</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {costReport.byModel.map((m: any, i: number) => (
+                                                        <tr key={i} style={{ borderBottom: i < costReport.byModel.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                                                            <td style={{ padding: '8px 12px', fontWeight: 500 }}>{m.model}</td>
+                                                            <td style={{ padding: '8px 12px' }}><Badge variant="neutral">{m.provider}</Badge></td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{m.calls}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{m.tokensIn?.toLocaleString()}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{m.tokensOut?.toLocaleString()}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--accent-primary-light)' }}>${m.cost?.toFixed(2)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                                {costReport.byTask?.length > 0 && (
+                                    <div>
+                                        <div className="text-sm" style={{ fontWeight: 600, marginBottom: 8 }}>Cost by Task</div>
+                                        <div style={{ borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                <thead>
+                                                    <tr style={{ background: 'var(--bg-glass)' }}>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Task</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Calls</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Tokens In</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Tokens Out</th>
+                                                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, borderBottom: '1px solid var(--border-subtle)' }}>Cost</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {costReport.byTask.map((t: any, i: number) => (
+                                                        <tr key={i} style={{ borderBottom: i < costReport.byTask.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                                                            <td style={{ padding: '8px 12px', fontWeight: 500 }}>{t.task.replace(/_/g, ' ')}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{t.calls}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{t.tokensIn?.toLocaleString()}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>{t.tokensOut?.toLocaleString()}</td>
+                                                            <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--accent-primary-light)' }}>${t.cost?.toFixed(2)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Meta & Schema */}
                         <div className="grid-2" style={{ gap: 24 }}>

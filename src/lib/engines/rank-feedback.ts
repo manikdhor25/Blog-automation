@@ -147,3 +147,213 @@ export async function applyRankFeedback(siteId?: string): Promise<{ updated: num
     log.info('Rank feedback applied', { updated, total: feedbacks.length });
     return { updated, feedbacks };
 }
+
+// ── #48: CTR-Based Title Testing ──────────────────────────────
+// Scores title variants based on CTR prediction signals
+
+export interface TitleVariant {
+    title: string;
+    score: number;
+    reasons: string[];
+}
+
+export function scoreTitleVariants(titles: string[], keyword: string): TitleVariant[] {
+    return titles.map(title => {
+        let score = 50; // Base score
+        const reasons: string[] = [];
+        const titleLower = title.toLowerCase();
+        const keywordLower = keyword.toLowerCase();
+
+        // Keyword in title (+15)
+        if (titleLower.includes(keywordLower)) {
+            score += 15;
+            reasons.push('Contains target keyword');
+        }
+
+        // Keyword near beginning (+10)
+        if (titleLower.indexOf(keywordLower) <= 10) {
+            score += 10;
+            reasons.push('Keyword near title start');
+        }
+
+        // Number in title (+8 — listicles and data-driven titles have higher CTR)
+        if (/\d+/.test(title)) {
+            score += 8;
+            reasons.push('Contains number');
+        }
+
+        // Year in title (+5)
+        const currentYear = new Date().getFullYear();
+        if (title.includes(String(currentYear)) || title.includes(String(currentYear + 1))) {
+            score += 5;
+            reasons.push('Contains current/next year');
+        }
+
+        // Power words (+5)
+        const powerWords = /\b(ultimate|proven|essential|complete|secret|best|free|new|fast|easy|simple|instant)\b/i;
+        if (powerWords.test(title)) {
+            score += 5;
+            reasons.push('Contains power word');
+        }
+
+        // Parenthetical/bracket (+4)
+        if (/[\(\[\{]/.test(title)) {
+            score += 4;
+            reasons.push('Contains brackets/parenthetical');
+        }
+
+        // Question format (+3)
+        if (/^(how|what|why|when|where|which|who|is|are|can|should)/i.test(title)) {
+            score += 3;
+            reasons.push('Question format');
+        }
+
+        // Length check — 50-65 chars is optimal for SERP display
+        if (title.length >= 50 && title.length <= 65) {
+            score += 5;
+            reasons.push('Optimal title length (50-65 chars)');
+        } else if (title.length > 65) {
+            score -= 5;
+            reasons.push('Title too long — may be truncated in SERPs');
+        } else if (title.length < 30) {
+            score -= 3;
+            reasons.push('Title very short — may look thin');
+        }
+
+        // Emotional trigger words (+3)
+        if (/\b(surprising|shocking|mistake|warning|avoid|never|always)\b/i.test(title)) {
+            score += 3;
+            reasons.push('Emotional trigger word');
+        }
+
+        return {
+            title,
+            score: Math.min(100, Math.max(0, score)),
+            reasons,
+        };
+    }).sort((a, b) => b.score - a.score);
+}
+
+// ── #49: SERP Feature Targeting ───────────────────────────────
+// Analyzes keyword to recommend which SERP features to target
+
+export interface SERPFeatureTarget {
+    feature: string;
+    eligibility: 'high' | 'medium' | 'low';
+    contentRequirement: string;
+    currentlyTargeted: boolean;
+}
+
+export function analyzeSERPFeatureTargets(
+    keyword: string,
+    contentHtml: string,
+    hasFAQ: boolean,
+    hasHowTo: boolean,
+    hasSchema: boolean
+): SERPFeatureTarget[] {
+    const targets: SERPFeatureTarget[] = [];
+    const kwLower = keyword.toLowerCase();
+
+    // Featured Snippet
+    const isQuestionKW = /^(how|what|why|when|where|which|who|is|are|can|should|does)/i.test(kwLower);
+    targets.push({
+        feature: 'Featured Snippet',
+        eligibility: isQuestionKW ? 'high' : 'medium',
+        contentRequirement: 'First paragraph under H2 must be a self-contained 40-60 word answer',
+        currentlyTargeted: /<p[^>]*>[\s\S]{150,300}<\/p>/i.test(contentHtml),
+    });
+
+    // PAA Box
+    targets.push({
+        feature: 'People Also Ask',
+        eligibility: hasFAQ ? 'high' : 'low',
+        contentRequirement: 'Include 5+ FAQ items with direct, concise answers',
+        currentlyTargeted: hasFAQ,
+    });
+
+    // HowTo Rich Result
+    const isHowTo = /\b(how to|step.by.step|guide|tutorial)\b/i.test(kwLower);
+    targets.push({
+        feature: 'HowTo Rich Result',
+        eligibility: isHowTo ? 'high' : 'low',
+        contentRequirement: 'Include numbered steps with HowTo schema',
+        currentlyTargeted: hasHowTo,
+    });
+
+    // Table/Comparison Rich Result
+    const isComparison = /\b(vs|compare|comparison|best|top \d+|alternatives)\b/i.test(kwLower);
+    targets.push({
+        feature: 'Table Snippet',
+        eligibility: isComparison ? 'high' : 'medium',
+        contentRequirement: 'Include comparison tables with structured data',
+        currentlyTargeted: /<table/i.test(contentHtml),
+    });
+
+    // Video Rich Result
+    targets.push({
+        feature: 'Video Rich Result',
+        eligibility: 'medium',
+        contentRequirement: 'Include embedded video with VideoObject schema',
+        currentlyTargeted: /youtube\.com|VideoObject/i.test(contentHtml),
+    });
+
+    // Breadcrumb Rich Result
+    targets.push({
+        feature: 'Breadcrumb',
+        eligibility: hasSchema ? 'high' : 'low',
+        contentRequirement: 'Include BreadcrumbList schema',
+        currentlyTargeted: hasSchema,
+    });
+
+    return targets;
+}
+
+// ── #58: SERP Feature Change Detection ────────────────────────
+// Compares SERP features over time to detect opportunities
+
+export interface SERPFeatureChange {
+    keyword: string;
+    feature: string;
+    changeType: 'appeared' | 'disappeared' | 'changed';
+    detectedAt: string;
+    recommendation: string;
+}
+
+export function detectSERPFeatureChanges(
+    keyword: string,
+    previousFeatures: string[],
+    currentFeatures: string[]
+): SERPFeatureChange[] {
+    const changes: SERPFeatureChange[] = [];
+    const prevSet = new Set(previousFeatures.map(f => f.toLowerCase()));
+    const currSet = new Set(currentFeatures.map(f => f.toLowerCase()));
+    const now = new Date().toISOString();
+
+    // New features appeared
+    for (const feature of currentFeatures) {
+        if (!prevSet.has(feature.toLowerCase())) {
+            changes.push({
+                keyword,
+                feature,
+                changeType: 'appeared',
+                detectedAt: now,
+                recommendation: `New "${feature}" feature detected for "${keyword}". Optimize content to capture this SERP feature.`,
+            });
+        }
+    }
+
+    // Features that disappeared
+    for (const feature of previousFeatures) {
+        if (!currSet.has(feature.toLowerCase())) {
+            changes.push({
+                keyword,
+                feature,
+                changeType: 'disappeared',
+                detectedAt: now,
+                recommendation: `"${feature}" feature no longer showing for "${keyword}". May indicate SERP intent shift.`,
+            });
+        }
+    }
+
+    return changes;
+}

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase';
 
 export default function SignupPage() {
+    const [displayName, setDisplayName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -32,6 +33,9 @@ export default function SignupPage() {
                 password,
                 options: {
                     emailRedirectTo: `${window.location.origin}/`,
+                    data: {
+                        display_name: displayName || undefined,
+                    },
                 },
             });
 
@@ -130,6 +134,19 @@ export default function SignupPage() {
 
                             <form onSubmit={handleSignup}>
                                 <div className="form-group">
+                                    <label className="form-label">Display Name <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Your name"
+                                        value={displayName}
+                                        onChange={e => setDisplayName(e.target.value)}
+                                        maxLength={100}
+                                        autoFocus
+                                    />
+                                </div>
+
+                                <div className="form-group">
                                     <label className="form-label">Email</label>
                                     <input
                                         type="email"
@@ -138,7 +155,6 @@ export default function SignupPage() {
                                         value={email}
                                         onChange={e => setEmail(e.target.value)}
                                         required
-                                        autoFocus
                                     />
                                 </div>
 

@@ -38,9 +38,9 @@ export function useFetch<T = unknown>(
         url,
         fetcher,
         {
-            revalidateOnFocus: true,
-            revalidateOnReconnect: true,
-            dedupingInterval: 5000,
+            revalidateOnFocus: false,
+            revalidateOnReconnect: false,
+            dedupingInterval: 10000,
             errorRetryCount: 3,
             ...options,
         }

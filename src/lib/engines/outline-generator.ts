@@ -6,6 +6,7 @@
 
 import { getAIRouter } from '../ai/router';
 import { CompetitorBlueprint, DeepPageContent } from './serp-intelligence';
+import { WORD_COUNT_MINIMUMS } from './content-utils';
 
 // ── Outline Types ──────────────────────────────────────────────
 
@@ -49,12 +50,21 @@ export async function generateOutline(
         paaQuestions?: string[];
         minWordCount?: number;
         contentLayer?: 'pillar' | 'supporting' | 'micro'; // Step 4: Information Layers
+        contentType?: 'article' | 'review' | 'how_to' | 'listicle' | 'comparison' | 'alternatives' | 'beginner_guide' | 'problem_solution' | 'case_study' | 'news';
     }
 ): Promise<ArticleOutline> {
     const ai = getAIRouter();
     const isCluster = options?.isCluster || false;
     const contentLayer = options?.contentLayer || 'supporting';
-    const minWords = options?.minWordCount || (isCluster ? 3000 : 1500);
+    const contentType = options?.contentType || 'article';
+    // Single source of truth: planner targets the SAME minimums the enforcer
+    // (WORD_COUNT_MINIMUMS) requires, by tier. Prevents the prior 1500/3000
+    // planner vs 1800/3500 enforcer mismatch.
+    const defaultMinWords = contentLayer === 'pillar' ? WORD_COUNT_MINIMUMS.pillar
+        : contentLayer === 'micro' ? WORD_COUNT_MINIMUMS.micro
+        : isCluster ? WORD_COUNT_MINIMUMS.cluster
+        : WORD_COUNT_MINIMUMS.normal;
+    const minWords = options?.minWordCount || defaultMinWords;
 
     // DIAGNOSTIC: Log content layer information
     console.log(`[OutlineGenerator] Generating outline for keyword: "${keyword}"`);
@@ -103,6 +113,10 @@ export async function generateOutline(
     const prompt = `Create a detailed article outline for the keyword: "${keyword}"
 ${options?.niche ? `Niche: ${options.niche}` : ''}
 ${lang !== 'en' ? `Language: Write all headings and descriptions in ${lang}` : ''}
+
+CONTENT TYPE: ${contentType.toUpperCase()}
+${getContentTypeInstructions(contentType, keyword)}
+${getContentLayerInstructions(contentLayer, keyword)}
 
 COMPETITOR RESEARCH (from top ${competitors.length} ranked articles in Google US):
 - Average word count: ${blueprint.avgWordCount} words
@@ -489,4 +503,214 @@ function validateOutline(raw: Record<string, unknown>, keyword: string, minWords
         keyTakeaways,
         totalTargetWords: typeof raw.totalTargetWords === 'number' ? raw.totalTargetWords : minWords,
     };
+}
+
+// ── Content Tier/Layer Instruction Templates ───────────────────
+// These inject tier-specific rules based on the content's role in the
+// topical authority hierarchy: pillar (hub), supporting (cluster), or micro.
+
+function getContentLayerInstructions(
+    layer: string,
+    keyword: string,
+    existingPillarUrl?: string
+): string {
+    switch (layer) {
+        case 'pillar':
+            return `\nCONTENT TIER: PILLAR (Comprehensive Authority Piece)
+- Cover the ENTIRE topic from every angle — this is the definitive resource
+- Include sections for: definition, history/context, types/categories, how-to, benefits, challenges, tools, trends, and FAQ
+- Link OUT to cluster articles on subtopics: use "[See our detailed guide on X]" placeholders for 5-8 cluster topics
+- Write for BROAD intent — a reader with zero knowledge should understand, but an expert should still learn something
+- Minimum 10-15 H2 sections with 3-4 H3s each
+- Include a "Topic Map" or "What This Guide Covers" section after the intro
+- Target: "${keyword}" as the top-level category page in your content hub
+- This page MUST be the most complete single resource on "${keyword}" available anywhere online`;
+
+        case 'supporting':
+            return `\nCONTENT TIER: CLUSTER (Subtopic Deep-Dive)
+- Focus NARROWLY on one specific subtopic of "${keyword}" — do NOT cover the broad topic
+- Link BACK to the pillar article at least 2 times: once in the intro, once in the conclusion
+${existingPillarUrl ? `- Pillar URL to link back to: ${existingPillarUrl}` : `- Use placeholder: [LINK TO PILLAR: ${keyword}]`}
+- Reference the pillar naturally: "As covered in our comprehensive ${keyword} guide..."
+- Go DEEPER than the pillar on this specific angle — more examples, more data, more actionable steps
+- Do NOT repeat general definitions already in the pillar — assume the reader has context
+- Include 2-3 links to sibling cluster articles using "[Related: Our guide on X]" placeholders`;
+
+        case 'micro':
+            return `\nCONTENT TIER: MICRO (Single-Question Answer)
+- Answer ONE specific question comprehensively in 600-800 words
+- Structure: Direct Answer (40 words) → Context (100 words) → Detail (300 words) → Related Questions (2-3 FAQs)
+- Optimize for Featured Snippet capture — this should BE the answer
+- Link to both the pillar and 1-2 cluster articles for readers who want more depth
+- Keep Flesch score 70+ — this targets quick-answer seekers
+- Use only 3-4 H2s maximum — tight and focused`;
+
+        default:
+            return '';
+    }
+}
+
+// ── Content Type Instruction Templates ─────────────────────────
+// These inject format-specific rules into the AI outline prompt so each
+// content type produces the correct article structure automatically.
+
+function getContentTypeInstructions(contentType: string, keyword: string): string {
+    const year = new Date().getFullYear();
+    switch (contentType) {
+        case 'review':
+            return `FORMAT INSTRUCTIONS — PRODUCT REVIEW:
+You are generating a single-product deep review.
+REQUIRED sections (in order):
+1. "Quick Verdict" — 2-3 sentence summary with a score out of 10
+2. "Key Features" — list the product's main features
+3. "Pros and Cons" — contentType MUST be "list" for this section
+4. "Performance / Testing" — real-world usage experience
+5. "Who It's For / Who It's NOT For" — audience fit
+6. "Value for Money" — pricing context vs alternatives
+7. "FAQ" — 4-5 product-specific questions
+8. "Final Verdict" — conclusion with affiliate CTA placeholder
+Use contentType "case_study" for testing sections, "list" for pros/cons, "comparison" for value.
+Title must include "${keyword}" + a verdict hint (e.g., "Worth It?", "Honest Review", "X/10").
+Target: 1,500-2,500 words.`;
+
+        case 'how_to':
+            return `FORMAT INSTRUCTIONS — HOW-TO / TUTORIAL:
+You are generating a step-by-step tutorial guide.
+REQUIRED structure:
+1. "What You'll Need" / "Prerequisites" — tools, materials, requirements
+2. Steps 1 through N — each step must be its own H2 with format "Step N: [Action Verb]..."
+3. "Troubleshooting Common Issues" — anticipate problems
+4. "Pro Tips" or "Expert Tips" — advanced advice
+5. "FAQ" — 3-5 how-to related questions
+Each step section must have contentType "how_to" and snippetTarget "list".
+Title format: "How to ${keyword} (Step-by-Step Guide ${year})" or similar.
+Keep language at Flesch 70+ (easy to read). Target: 1,200-2,500 words.`;
+
+        case 'listicle':
+            return `FORMAT INSTRUCTIONS — BEST-X / TOP-N LISTICLE:
+You are generating a ranked "Best X" or "Top N" listicle article.
+REQUIRED structure:
+1. Introduction + Quick comparison overview
+2. Items #1 through #N — each item is its own H2 with format "#N. [Product/Item Name] — Best for [Use Case]"
+3. Each item section needs H3s for: Key Features, Pros, Cons, Pricing, Best For
+4. "How We Tested / Our Methodology" — credibility section
+5. "Buying Guide" — what to look for
+6. "FAQ" — 4-6 buyer-intent questions
+7. "Final Picks" — summary table with top 3 picks
+Use contentType "comparison" for overview, "list" for each item, "how_to" for buying guide.
+Include at least 7-10 items. Title: "Best N ${keyword} [${year}]" or "${keyword}: N Top Picks Tested".
+Target: 2,000-4,000 words.`;
+
+        case 'comparison':
+            return `FORMAT INSTRUCTIONS — VS / HEAD-TO-HEAD COMPARISON:
+You are generating a detailed feature-by-feature comparison of 2-3 products/options.
+REQUIRED structure:
+1. "Quick Verdict" — declare a winner upfront with reasoning
+2. "Overview" — brief intro of each product/option
+3. Feature-by-feature H2 sections (8-10 features) — each H2: "[Feature Category]: [Winner] Wins"
+4. Each feature section must declare a winner with specific reasoning
+5. "Pricing Comparison" — contentType "comparison", snippetTarget "table"
+6. "Who Should Choose [A]?" / "Who Should Choose [B]?" — audience fit
+7. "FAQ" — 4-6 comparison questions ("Is X better than Y for...?")
+8. "Final Verdict" — overall winner with use-case recommendations
+Use contentType "comparison" for feature sections. Include specific numbers and data.
+Title: "${keyword} [${year}] — Which One Actually Wins?".
+Target: 2,500-4,000 words.`;
+
+        case 'alternatives':
+            return `FORMAT INSTRUCTIONS — ALTERNATIVES CONTENT:
+You are generating "Best [Product] Alternatives" content targeting users ready to switch.
+REQUIRED structure:
+1. "Why Look for Alternatives?" — pain points with the main product
+2. Quick comparison table of all alternatives
+3. Alternative #1 through #N — each as H2: "#N. [Name] — Best for [Use Case]"
+4. Each alternative needs: What It Does, Where It Beats [Original], Where It Falls Short, Pricing
+5. "How I Tested These" — methodology section
+6. "FAQ" — questions like "Is [alt] better than [original]?"
+7. "My Top Pick" — clear recommendation
+Use contentType "comparison" for the table, "list" for each alternative.
+Include 6-8 alternatives. Title: "N Best ${keyword} [${year}] — Free & Paid".
+Target: 2,000-3,500 words.`;
+
+        case 'beginner_guide':
+            return `FORMAT INSTRUCTIONS — BEGINNER'S GUIDE:
+You are generating a comprehensive beginner-friendly guide.
+REQUIRED structure:
+1. "What Is [Topic]?" — define the basics simply
+2. "Why Does [Topic] Matter?" — motivation for beginners
+3. Core concept sections (4-6) — progress from basic → intermediate
+4. "Your First [Action]" — step-by-step getting started
+5. "Common Beginner Mistakes" — what to avoid
+6. "Glossary of Key Terms" — contentType "list"
+7. "Next Steps" — where to go from here
+8. "FAQ" — 5-8 beginner questions
+Each section must assume ZERO prior knowledge. Use simple language (Flesch 70+).
+Include practical examples with every concept. Use contentType "explanation" for concepts, "how_to" for actionable sections.
+Title: "The Complete Beginner's Guide to ${keyword} [${year}]".
+Target: 3,000-5,000 words (near pillar-length).`;
+
+        case 'problem_solution':
+            return `FORMAT INSTRUCTIONS — PROBLEM-SOLUTION CONTENT:
+You are generating content that addresses a specific pain point with actionable solutions.
+REQUIRED structure:
+1. "Why Does [Problem] Happen?" — explain the cause (build E-E-A-T)
+2. Solution sections (5-8) — each H2: "Method N: [Solution] (+ Product Recommendation)"
+3. Each solution must be actionable with specific steps
+4. "What DOESN'T Work" — debunk myths (reduces bounce rate)
+5. "When to Seek Professional Help" — trust signal
+6. "FAQ" — 3-5 problem-specific questions
+7. "Best Solution Summary" — quick-pick recommendation
+Use contentType "how_to" for solutions, "explanation" for causes.
+Title: "How to ${keyword} (N Proven Methods)".
+Target: 1,200-2,000 words.`;
+
+        case 'case_study':
+            return `FORMAT INSTRUCTIONS — CASE STUDY / EXPERIENCE POST:
+You are generating a real-usage experience report with data and results.
+REQUIRED structure:
+1. "Why I Tested This" — setup, expectations, context
+2. "My Setup" — product details, cost, configuration
+3. Timeline sections (Week 1, Week 2, etc. OR Day 1-7, Day 8-14, etc.)
+4. "The Results" — data, measurements, before vs after
+5. "What I'd Do Differently" — lessons learned
+6. "Who Should Buy This (and Who Shouldn't)" — honest audience fit
+7. "FAQ" — 3-5 experience questions
+8. "Final Verdict" — score + affiliate CTA
+Use contentType "case_study" for timeline sections, "stats" for results.
+Emphasize PERSONAL EXPERIENCE — this is E-E-A-T "Experience" content.
+Title: "I [Used/Tested] ${keyword} for [N Days] — Here's What Happened".
+Target: 1,500-3,000 words.`;
+
+        case 'news':
+            return `FORMAT INSTRUCTIONS — INDUSTRY TRENDS / NEWS:
+You are generating timely trend/news content.
+REQUIRED structure:
+1. Brief intro — what changed and why it matters NOW
+2. Trend/tool/update sections (5-7) — each H2: "#N. [Trend Name]"
+3. Each section: what it is, who it affects, pricing/availability
+4. "What's Coming Next" — predictions section
+5. "Key Takeaway" — one-line summary
+Keep content CONCISE and SCANNABLE. No filler. Short paragraphs.
+Use contentType "list" for trend sections, "stats" for data.
+Include specific dates, version numbers, and freshness signals.
+Title: "N ${keyword} [${year}] — What You Need to Know".
+Target: 800-1,500 words (shorter for speed).`;
+
+        default:
+            return `FORMAT INSTRUCTIONS — STANDARD ARTICLE:
+You are generating a well-structured, SEO-optimized editorial article.
+REQUIRED structure:
+1. Strong opening — direct answer to the keyword query + relatable context
+2. Core concept sections (4-6 H2s) — mix of explanation, data, and actionable insight
+3. Each H2 should cover a distinct angle: definition, benefits, implementation, comparison, or analysis
+4. At least 1 section with a data table or comparison chart
+5. At least 1 "Common Mistakes" or "What Most People Get Wrong" section
+6. Practical Takeaways — actionable checklist or numbered steps
+7. FAQ section — 4-6 questions with 40-60 word answers
+8. Closing with Sources/References
+Use contentType "explanation" for conceptual sections, "list" for actionable sections, "comparison" for analytical sections, "how_to" for implementation steps.
+Mix section types for visual variety — don't make every section the same format.
+Title: Use a CTR-optimized format with keyword + specific angle or data point.
+Target: 1,800-2,500 words.`;
+    }
 }

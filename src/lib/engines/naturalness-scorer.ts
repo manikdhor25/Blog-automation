@@ -295,9 +295,113 @@ export function scoreNaturalness(htmlContent: string): NaturalnessReport {
         score -= 8;
         issues.push(`Flesch-Kincaid grade ${readabilityGrade} — too complex for general audience`);
         suggestions.push('Aim for grade 8 or below: use simpler words and shorter sentences');
-    } else if (readabilityGrade > 8) {
+    } else    if (readabilityGrade > 8) {
         score -= 4;
         suggestions.push(`Readability grade ${readabilityGrade} — try to simplify to grade 8`);
+    }
+
+    // ── 10. Paragraph-Level Diversity (#21) ─────────────────────
+    // Check that paragraphs vary in length — AI tends to write uniform-length paragraphs
+    const paragraphs = htmlContent.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || [];
+    const paraWordCounts = paragraphs.map(p => p.replace(/<[^>]+>/g, '').split(/\s+/).length);
+    if (paraWordCounts.length >= 4) {
+        const paraMean = paraWordCounts.reduce((a, b) => a + b, 0) / paraWordCounts.length;
+        const paraVariance = paraWordCounts.reduce((sum, len) => sum + Math.pow(len - paraMean, 2), 0) / paraWordCounts.length;
+        const paraStdDev = Math.sqrt(paraVariance);
+
+        if (paraStdDev < 8) {
+            score -= 8;
+            issues.push(`Paragraph lengths are too uniform (σ: ${paraStdDev.toFixed(1)}) — AI-typical pattern`);
+            suggestions.push('Mix short 1-2 sentence paragraphs with longer 4-5 sentence paragraphs for visual rhythm');
+        } else if (paraStdDev > 15) {
+            score = Math.min(score + 2, 100); // Good variation bonus
+        }
+    }
+
+    // ── 11. Hedging Language Detection (#22) ─────────────────────
+    // AI uses excessive hedging that weakens authority
+    const hedgingPatterns = [
+        /\b(it is worth noting that)\b/gi,
+        /\b(it should be noted that)\b/gi,
+        /\b(it is important to note that)\b/gi,
+        /\b(it is generally considered)\b/gi,
+        /\b(to a certain extent)\b/gi,
+        /\b(in some cases)\b/gi,
+        /\b(may or may not)\b/gi,
+        /\b(could potentially)\b/gi,
+        /\b(might possibly)\b/gi,
+        /\b(tends to be)\b/gi,
+        /\b(arguably)\b/gi,
+        /\b(relatively speaking)\b/gi,
+        /\b(for the most part)\b/gi,
+    ];
+
+    let hedgeCount = 0;
+    const detectedHedges: string[] = [];
+    for (const pattern of hedgingPatterns) {
+        const matches = text.match(pattern);
+        if (matches) {
+            hedgeCount += matches.length;
+            detectedHedges.push(matches[0]);
+        }
+    }
+
+    if (hedgeCount >= 6) {
+        score -= 10;
+        issues.push(`Excessive hedging language (${hedgeCount} instances) — weakens authority`);
+        suggestions.push(`Remove wishy-washy qualifiers: "${detectedHedges.slice(0, 3).join('", "')}"`);
+    } else if (hedgeCount >= 3) {
+        score -= 4;
+        suggestions.push(`Some hedging language detected (${hedgeCount} instances) — be more direct`);
+    }
+
+    // ── 12. Repetitive Structure Detection (#23) ─────────────────
+    // Detect formulaic patterns where every H2 section follows the same structure
+    const h2Sections = htmlContent.split(/<h2[^>]*>/gi);
+    if (h2Sections.length >= 4) {
+        const sectionPatterns: string[] = [];
+        for (let i = 1; i < h2Sections.length; i++) {
+            const section = h2Sections[i];
+            const hasH3 = /<h3/i.test(section);
+            const hasList = /<[ou]l/i.test(section);
+            const hasTable = /<table/i.test(section);
+            const paraCount = (section.match(/<p/gi) || []).length;
+            // Create a pattern fingerprint
+            const fingerprint = `${hasH3 ? 'H3' : ''}|${hasList ? 'LIST' : ''}|${hasTable ? 'TABLE' : ''}|P${Math.min(paraCount, 5)}`;
+            sectionPatterns.push(fingerprint);
+        }
+
+        // Check if >60% of sections have the same pattern
+        const patternFreq = new Map<string, number>();
+        for (const p of sectionPatterns) {
+            patternFreq.set(p, (patternFreq.get(p) || 0) + 1);
+        }
+        const maxFreq = Math.max(...patternFreq.values());
+        const uniformityRatio = maxFreq / sectionPatterns.length;
+
+        if (uniformityRatio > 0.75) {
+            score -= 8;
+            issues.push(`${(uniformityRatio * 100).toFixed(0)}% of H2 sections have identical structure — formulaic AI pattern`);
+            suggestions.push('Vary section formats: mix paragraphs-only with lists, tables, and sub-headings');
+        } else if (uniformityRatio > 0.6) {
+            score -= 3;
+            suggestions.push('Sections are slightly formulaic — add more structural variety');
+        }
+    }
+
+    // ── 13. Rhetorical Question Bonus (#33) ──────────────────────
+    // Reward conversational engagement devices
+    const rhetoricalQuestions = text.match(/[A-Z][^.!?]*\?/g) || [];
+    const questionsPerK = (rhetoricalQuestions.length / words.length) * 1000;
+
+    if (questionsPerK >= 1.5 && questionsPerK <= 5) {
+        score = Math.min(score + 4, 100); // Sweet spot — engaging but not overdone
+    } else if (questionsPerK > 5) {
+        score -= 3;
+        suggestions.push('Too many questions — sounds like a quiz rather than an article');
+    } else if (questionsPerK < 0.5 && words.length > 1000) {
+        score -= 2;
+        suggestions.push('Add 2-3 rhetorical questions to boost conversational engagement');
     }
 
     return {

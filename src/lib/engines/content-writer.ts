@@ -18,6 +18,7 @@ import { getLinkingEngine } from './linking-engine';
 import { getSERPIntelligence } from './serp-intelligence';
 import { getImageResolver, getYouTubeEmbedder, VideoMeta } from './media-engine';
 import { createServiceRoleClient } from '../supabase';
+import { logger } from '../logger';
 
 // ── Import from decomposed modules ────────────────────────────
 import {
@@ -31,9 +32,16 @@ import {
     type ContentPromptOptions,
 } from './content-utils';
 
-import { buildContentPrompt } from './content-prompts';
+import {
+    buildContentPrompt,
+    SECTION_SEO_RULES,
+    CTA_RULES,
+    EXPERTISE_SIGNALS,
+    ARTICLE_TYPE_BODY_RULES,
+} from './content-prompts';
 import { generateSchemaMarkup } from './content-schema';
 import { runQualityGate } from './content-quality-gate';
+import { moderateContent, injectDisclaimers } from './content-moderation';
 
 // ── Barrel re-exports for backward compatibility ──────────────
 // Existing imports like `import { countWordsInHTML } from './content-writer'`
@@ -170,6 +178,15 @@ Provide a JSON response with:
             parsed.content = qualityResult.content;
             parsed.qualityMetrics = qualityResult.metrics;
 
+            // ── CONTENT MODERATION ──────────────────────────────────
+            const modResult = moderateContent(parsed.content, options?.niche);
+            if (modResult.disclaimers.length > 0) {
+                parsed.content = injectDisclaimers(parsed.content, modResult.disclaimers);
+            }
+            if (!modResult.safe) {
+                logger.warn('Content moderation flagged critical issues', { action: 'generateArticle', keyword, summary: modResult.summary });
+            }
+
             return parsed;
         } catch {
             return {
@@ -230,7 +247,7 @@ Provide a JSON response with:
 
             try {
                 let sectionHTML = await ai.generate('content_writing', sectionPrompt, {
-                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} Generate only the requested HTML section. No JSON, no code blocks.`,
+                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} Generate only the requested HTML section. No JSON, no code blocks, no code fences.`,
                     temperature: 0.5,
                     maxTokens: 1024,
                 });
@@ -314,7 +331,7 @@ Return ONLY the HTML sections(H2s with content).No JSON, no code blocks, no prea
 
             try {
                 const expansion = await ai.generate('content_writing', expansionPrompt, {
-                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You are expanding an article with substantive new sections. Every word must add value — no filler.`,
+                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You are expanding an article with substantive new sections. Every word must add value — no filler. Return raw HTML only, no code fences.`,
                     temperature: pickTemperature(keyword, 'section'),
                     maxTokens: 4096,
                 });
@@ -355,7 +372,7 @@ Return ONLY the HTML sections(H2s with content).No JSON, no code blocks, no prea
         // Final check — log if still below minimum
         const finalWords = countWordsInHTML(content);
         if (finalWords < minWords) {
-            console.warn(`[ContentWriter] Word count enforcement: ${finalWords}/${minWords} after ${MAX_EXPANSION_ROUNDS} expansion rounds for "${keyword}"`);
+            logger.warn('Word count enforcement fell short', { action: 'word_count_enforcement', currentWords: finalWords, targetWords: minWords, keyword });
         }
 
         return content;
@@ -374,19 +391,33 @@ Return ONLY the HTML sections(H2s with content).No JSON, no code blocks, no prea
             authorName?: string;
             authorBio?: string;
             siteId?: string;
+            /** Article-level content type — drives body-level type rules (verdict/winner/CTA) */
+            contentType?: 'article' | 'review' | 'how_to' | 'listicle' | 'comparison' | 'alternatives' | 'beginner_guide' | 'problem_solution' | 'case_study' | 'news';
         }
     ): Promise<GeneratedContent> {
+        const pipelineStart = Date.now();
+        const requestId = `cw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const log = logger.child({
+            action: 'generateFromOutline',
+            keyword,
+            siteId: options?.siteId,
+            requestId,
+        });
+        log.info('Pipeline started', { sectionCount: outline.sections.length, language: options?.language });
+
         const ai = getAIRouter();
         const lang = options?.language || 'en';
         const langNote = lang !== 'en' ? ` Write entirely in ${lang}.` : '';
+        const articleType = options?.contentType || 'article';
         const sections: string[] = [];
 
         // ── 1. Introduction ────────────────────────────────────
+        const introHook = outline.introHook || `A comprehensive look at ${keyword} with expert insights and practical recommendations`;
         const introPrompt = `Write the introduction for an article titled "${outline.title}" targeting the keyword "${keyword}".
 
 STRUCTURE (follow this exact 4-part pattern):
 
-1. HOOK (1 sentence): Start with this direct-answer opening: "${outline.introHook}"
+1. HOOK (1 sentence): Start with this direct-answer opening: "${introHook}"
    - This sentence MUST contain "${keyword}" and a specific claim, number, or finding.
 
 2. SNIPPET PARAGRAPH (2-3 sentences, 40-60 words total):
@@ -421,13 +452,15 @@ TARGET: 150-250 words. Return HTML only (use <p> tags, <strong> for key facts).$
 ${HUMAN_STYLE_CONTENT_RULES}
 Write with personality — as if a knowledgeable colleague is sharing insider insight, not a textbook.`;
 
+        const introStart = Date.now();
         let introResult = await ai.generate('section_writing', introPrompt, {
-            systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} Return valid HTML only — no markdown.`,
+            systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} Return valid HTML only — no markdown syntax, no code fences (no \`\`\`html blocks). Output raw HTML tags directly.`,
             temperature: pickTemperature(keyword, 'section'),
             maxTokens: 1024,
         });
         introResult = cleanAIPatterns(introResult);
         sections.push(introResult);
+        log.info('Stage: Introduction written', { stage: 'introduction', contentLength: introResult.length, duration: Date.now() - introStart });
 
         // ── 2. Key Takeaways ───────────────────────────────────
         if (outline.keyTakeaways && outline.keyTakeaways.length > 0) {
@@ -445,6 +478,7 @@ ${outline.keyTakeaways.map(t => `<li><strong>${t}</strong></li>`).join('\n')}
         // First 5 sections: generate sequentially with context of previous
         // sections to prevent repetition of examples, stats, and talking points.
         // Remaining sections: generate in parallel batches for speed.
+        const bodyStart = Date.now();
         const SEQUENTIAL_COUNT = Math.min(5, outline.sections.length);
         const previousSectionSummaries: string[] = [];
 
@@ -454,7 +488,7 @@ ${outline.keyTakeaways.map(t => `<li><strong>${t}</strong></li>`).join('\n')}
             const contextNote = previousSectionSummaries.length > 0
                 ? `\n\nALREADY COVERED (do NOT repeat these points, examples, or statistics):\n${previousSectionSummaries.map(s => `- ${s}`).join('\n')}`
                 : '';
-            const result = await this.generateSection(ai, keyword, section, i, lang, langNote, contextNote);
+            const result = await this.generateSection(ai, keyword, section, i, lang, langNote, contextNote, articleType);
             sections.push(result);
 
             // Extract a brief summary of what this section covered
@@ -473,12 +507,14 @@ ${outline.keyTakeaways.map(t => `<li><strong>${t}</strong></li>`).join('\n')}
                 const batch = remainingSections.slice(batchStart, batchStart + BATCH_SIZE);
                 const batchPromises = batch.map((section, batchIdx) => {
                     const sectionIdx = SEQUENTIAL_COUNT + batchStart + batchIdx;
-                    return this.generateSection(ai, keyword, section, sectionIdx, lang, langNote, contextNote);
+                    return this.generateSection(ai, keyword, section, sectionIdx, lang, langNote, contextNote, articleType);
                 });
                 const batchResults = await Promise.all(batchPromises);
                 sections.push(...batchResults);
             }
         }
+        const bodyWordCount = sections.reduce((sum, s) => sum + countWordsInHTML(s), 0);
+        log.info('Stage: Body sections complete', { stage: 'body_sections', sectionCount: outline.sections.length, wordCount: bodyWordCount, duration: Date.now() - bodyStart });
 
         // ── 5. Comparison Table ────────────────────────────────
         if (outline.comparisonTable) {
@@ -496,23 +532,24 @@ REQUIREMENTS:
 ${langNote}`;
 
             const tableResult = await ai.generate('section_writing', tablePrompt, {
-                systemPrompt: 'You are a product analyst creating detailed comparison tables with real data. Return valid HTML only.',
+                systemPrompt: 'You are a product analyst creating detailed comparison tables with real data. Return valid HTML only — no code fences, no markdown.',
                 temperature: 0.5,
                 maxTokens: 2048,
             });
             sections.push(`<div id="comparison-table">${tableResult}</div>`);
         }
 
-        // ── 6. FAQ Section ─────────────────────────────────────
-        if (outline.faqQuestions && outline.faqQuestions.length > 0) {
-            const faqPrompt = `Write the FAQ section for an article about "${keyword}".
+        // ── 6 + 7: FAQ + Conclusion (PARALLELIZED — independent AI calls) ──
+        const faqPromise = (outline.faqQuestions && outline.faqQuestions.length > 0)
+            ? (async () => {
+                const faqPrompt = `Write the FAQ section for an article about "${keyword}".
 
 QUESTIONS TO ANSWER:
 ${outline.faqQuestions.map((faq, i) => `${i + 1}. ${faq.question} (target: ${faq.targetWords} words)`).join('\n')}
 
 REQUIREMENTS:
-- Each answer must be 50-80 words — specific and actionable
-- Structure each answer: Claim → Evidence (specific stat/example) → Takeaway
+- Each answer must be 40-60 words — hard ceiling 60 words (single FAQ standard for snippet extraction)
+- Structure each answer: Claim (the snippet) → Evidence (specific stat/example) → Takeaway
 - Start each answer with a DIRECT statement, not "Yes," or "No," followed by nothing useful
 - Include at least one specific fact, number, or example per answer
 - Include "${keyword}" or a variation in at least 40% of answers
@@ -522,17 +559,18 @@ REQUIREMENTS:
 - Return HTML only${langNote}
 ${HUMAN_STYLE_CONTENT_RULES}`;
 
-            let faqResult = await ai.generate('section_writing', faqPrompt, {
-                systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You answer questions concisely with specific data. Format for FAQ schema. Return valid HTML only.`,
-                temperature: 0.5,
-                maxTokens: 2048,
-            });
-            faqResult = cleanAIPatterns(faqResult);
-            sections.push(`<div id="faq-section" itemscope itemtype="https://schema.org/FAQPage">${faqResult}</div>`);
-        }
+                let faqResult = await ai.generate('section_writing', faqPrompt, {
+                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You answer questions concisely with specific data. Format for FAQ schema. Return valid HTML only — no code fences.`,
+                    temperature: 0.5,
+                    maxTokens: 2048,
+                });
+                faqResult = cleanAIPatterns(faqResult);
+                return `<div id="faq-section" itemscope itemtype="https://schema.org/FAQPage">${faqResult}</div>`;
+            })()
+            : Promise.resolve(null);
 
-        // ── 7. Conclusion ──────────────────────────────────────
-        const conclusionPrompt = `Write a conclusion for an article titled "${outline.title}" about "${keyword}".
+        const conclusionPromise = (async () => {
+            const conclusionPrompt = `Write a conclusion for an article titled "${outline.title}" about "${keyword}".
 
 STRUCTURE (follow this 4-part pattern):
 
@@ -554,12 +592,38 @@ RULES:
 - Return HTML only (<h2>, <p> tags)${langNote}
 ${HUMAN_STYLE_CONTENT_RULES}`;
 
-        let conclusionResult = await ai.generate('section_writing', conclusionPrompt, {
-            systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You craft compelling, actionable conclusions. Return valid HTML only.`,
-            temperature: 0.6,
-            maxTokens: 1024,
-        });
-        conclusionResult = cleanAIPatterns(conclusionResult);
+            let conclusionResult = await ai.generate('section_writing', conclusionPrompt, {
+                systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You craft compelling, actionable conclusions. Return valid HTML only — no code fences.`,
+                temperature: 0.6,
+                maxTokens: 1024,
+            });
+            conclusionResult = cleanAIPatterns(conclusionResult);
+            return conclusionResult;
+        })();
+
+        // Wait for both FAQ + Conclusion to finish
+        const [faqHtml, rawConclusion] = await Promise.all([faqPromise, conclusionPromise]);
+
+        if (faqHtml) {
+            sections.push(faqHtml);
+        }
+
+        // #29: Verify keyword presence in conclusion (quality check preserved)
+        let conclusionResult = rawConclusion;
+        const conclusionText = conclusionResult.replace(/<[^>]+>/g, '').toLowerCase();
+        const keywordLower = keyword.toLowerCase();
+        const keywordCount = (conclusionText.match(new RegExp(keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        if (keywordCount < 1) {
+            log.warn('Conclusion missing target keyword — attempting inline injection', { stage: 'conclusion', keywordCount });
+            const kwTitle = keyword.charAt(0).toUpperCase() + keyword.slice(1);
+            conclusionResult = conclusionResult.replace(
+                /(<p[^>]*>)([^<]+)/i,
+                `$1${kwTitle} matters here: $2`
+            );
+        } else if (keywordCount < 2) {
+            log.info('Conclusion keyword density below target', { stage: 'conclusion', keywordCount, target: '2-3' });
+        }
+
         sections.push(conclusionResult);
 
         // ── 8. AI-generated Sources & References ──────────────────
@@ -583,11 +647,188 @@ ${HUMAN_STYLE_CONTENT_RULES}`;
 <div class="last-updated"><strong>Last Updated:</strong> ${dateStr}</div>
 ${sections.join('\n\n')}`;
 
-        // Post-generation cleanup
-        fullContent = cleanAIPatterns(fullContent);
+        // ── Strip markdown code fences the AI may have wrapped around sections ──
+        fullContent = fullContent.replace(/```(?:html|HTML)?\s*\n?/g, '');
+        fullContent = fullContent.replace(/\n?```\s*$/gm, '');
+
+        // ── #30: Question-Based H2 Validation ────────────────────
+        const h2Headings = fullContent.match(/<h2[^>]*>([\s\S]*?)<\/h2>/gi) || [];
+        const h2Texts = h2Headings.map(h => h.replace(/<[^>]+>/g, '').trim());
+
+        // ── Deduplicate H2 headings ──────────────────────────────
+        // When sections are generated independently, the AI sometimes reuses
+        // the same heading (e.g., "What is the best CRM for small business?").
+        // Keep the FIRST occurrence and remove subsequent duplicates along with
+        // their content up to the next H2.
+        const seenH2s = new Set<string>();
+        for (const h2Text of h2Texts) {
+            const normalized = h2Text.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+            if (seenH2s.has(normalized)) {
+                // Find and remove this duplicate H2 + its content until next H2
+                const escapedH2 = h2Text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const dupePattern = new RegExp(
+                    `<h2[^>]*>${escapedH2}</h2>[\\s\\S]*?(?=<h2[^>]*>|$)`,
+                    'i'
+                );
+                // Only remove the SECOND occurrence (skip the first match)
+                let matchCount = 0;
+                fullContent = fullContent.replace(dupePattern, (match) => {
+                    matchCount++;
+                    return matchCount > 1 ? '' : match;
+                });
+                log.warn('Removed duplicate H2', { stage: 'h2_dedup', heading: h2Text });
+            }
+            seenH2s.add(normalized);
+        }
+
+        const questionH2s = h2Texts.filter(t => t.endsWith('?'));
+        const questionRatio = h2Texts.length > 0 ? questionH2s.length / h2Texts.length : 0;
+        if (questionRatio < 0.3 && h2Texts.length >= 5) {
+            log.warn('Low H2 question ratio', { stage: 'h2_validation', questionRatio: +(questionRatio * 100).toFixed(0), questionH2s: questionH2s.length, totalH2s: h2Texts.length });
+        } else {
+            log.info('H2 question ratio', { stage: 'h2_validation', questionRatio: +(questionRatio * 100).toFixed(0), questionH2s: questionH2s.length, totalH2s: h2Texts.length });
+        }
+
+        // ── #54: Content Format Diversity Check ──────────────────
+        const formatTypes = {
+            paragraphs: (fullContent.match(/<p/gi) || []).length,
+            lists: (fullContent.match(/<[ou]l/gi) || []).length,
+            tables: (fullContent.match(/<table/gi) || []).length,
+            blockquotes: (fullContent.match(/<blockquote/gi) || []).length,
+            images: (fullContent.match(/<img/gi) || []).length,
+            headings: (fullContent.match(/<h[23]/gi) || []).length,
+            callouts: (fullContent.match(/class="callout/gi) || []).length,
+            pullQuotes: (fullContent.match(/class="pull-quote/gi) || []).length,
+            statHighlights: (fullContent.match(/class="stat-highlight/gi) || []).length,
+            definitionLists: (fullContent.match(/<dl/gi) || []).length,
+            codeBlocks: (fullContent.match(/<pre/gi) || []).length,
+            accordions: (fullContent.match(/class="accordion/gi) || []).length,
+            footnotes: (fullContent.match(/class="footnote/gi) || []).length,
+        };
+        const activeFormats = Object.values(formatTypes).filter(count => count > 0).length;
+        if (activeFormats < 5) {
+            log.warn('Low content format diversity', { stage: 'format_diversity', activeFormats, target: 5, formatTypes });
+        } else {
+            log.info('Content format diversity', { stage: 'format_diversity', activeFormats, formatTypes });
+        }
+
+        // ── CTA Enforcement (revenue-critical) ────────────────────
+        // Affiliate platform: monetizable types MUST carry conversion paths.
+        // The model is instructed to add CTAs, but we verify and inject if short.
+        const ctaMinByType: Record<string, number> = {
+            review: 2, listicle: 2, comparison: 1, alternatives: 1,
+        };
+        const ctaMin = ctaMinByType[articleType] || 0;
+        if (ctaMin > 0) {
+            const ctaCount = (fullContent.match(/class="cta-box"/gi) || []).length;
+            if (ctaCount < ctaMin) {
+                const ctaTemplate = `<div class="cta-box"><strong>Ready to take the next step with ${keyword}?</strong><p>Compare your best options and pick what fits your needs.</p><a href="#" class="cta-button">See Top Picks</a></div>`;
+                const needed = ctaMin - ctaCount;
+                const ctaBlock = Array(needed).fill(ctaTemplate).join('\n');
+                // Insert before FAQ, else before Sources, else before conclusion-ish last H2
+                const anchor = fullContent.search(/<div[^>]*id="faq-section"|<div[^>]*class="sources-references"/i);
+                if (anchor > -1) {
+                    fullContent = fullContent.slice(0, anchor) + ctaBlock + '\n' + fullContent.slice(anchor);
+                } else {
+                    const lastH2 = fullContent.lastIndexOf('<h2');
+                    fullContent = lastH2 > 0
+                        ? fullContent.slice(0, lastH2) + ctaBlock + '\n' + fullContent.slice(lastH2)
+                        : fullContent + '\n' + ctaBlock;
+                }
+                log.info('CTA enforcement injected missing CTAs', { stage: 'cta_enforcement', articleType, had: ctaCount, min: ctaMin, injected: needed });
+            }
+        }
+
+        // ── #62: Image SEO Optimization ───────────────────────────
+        try {
+            const { optimizeImageSEO } = await import('./media-engine');
+            fullContent = optimizeImageSEO(fullContent, keyword);
+        } catch {}
+
+
+        // ── Content Enhancement Pipeline (#21, #22, #39) ─────────
+        const enhanceStart = Date.now();
+        const preEnhanceLength = fullContent.length;
+        try {
+            const { injectTableOfContents, autoInjectComparisonTable, enforceSemanticHTML, enhanceContentFormatting } = await import('./content-enhancer');
+            // #21: Auto-generate Table of Contents
+            fullContent = injectTableOfContents(fullContent, 4);
+            // #22: Auto-inject comparison tables for vs/best keywords
+            fullContent = autoInjectComparisonTable(fullContent, keyword);
+            // #39: Enforce semantic HTML5 structure
+            fullContent = enforceSemanticHTML(fullContent);
+            // #NEW: Enhanced content formatting (callouts, pull quotes, accordion FAQ, footnotes, code blocks, reading time, progress bar, responsive images)
+            fullContent = enhanceContentFormatting(fullContent, keyword);
+            log.info('Stage: Enhancement complete', { stage: 'enhancement', contentLengthBefore: preEnhanceLength, contentLengthAfter: fullContent.length, contentLengthChange: fullContent.length - preEnhanceLength, duration: Date.now() - enhanceStart });
+        } catch (enhanceErr) {
+            log.warn('Content enhancement skipped', { stage: 'enhancement', duration: Date.now() - enhanceStart, error: String(enhanceErr) });
+        }
+
+        // ── OA-1: Entity & GEO Optimization ─────────────────────
+        // Connects previously-orphaned EntityOptimizer and GEOOptimizer
+        // to fill entity coverage and GEO attribution gaps.
+
+        // Stage: Entity Analysis (independent try/catch — Patch #3)
+        const entityStart = Date.now();
+        try {
+            const { getEntityOptimizer } = await import('./entity-optimizer');
+            const entityOpt = getEntityOptimizer();
+
+            const entityAnalysis = await entityOpt.analyzeEntities(fullContent, keyword);
+            const missingNames = entityAnalysis.missingEntities.slice(0, 5).map((e: { name: string }) => e.name);
+            log.info('Stage: Entity analysis', {
+                stage: 'entity_analysis',
+                saturationScore: entityAnalysis.saturationScore,
+                entityCount: entityAnalysis.missingEntities.length,
+                missingEntities: missingNames,
+                duration: Date.now() - entityStart,
+            });
+            if (entityAnalysis.saturationScore < 70) {
+                log.warn('Entity saturation below threshold', {
+                    stage: 'entity_analysis',
+                    saturationScore: entityAnalysis.saturationScore,
+                    missingEntities: missingNames,
+                });
+            }
+        } catch (entityErr) {
+            log.warn('Entity analysis failed (non-fatal)', { stage: 'entity_analysis', duration: Date.now() - entityStart, error: String(entityErr) });
+        }
+
+        // Stage: GEO Optimization (independent try/catch — Patch #3)
+        const geoStart = Date.now();
+        try {
+            const { getGEOOptimizer } = await import('./geo-optimizer');
+            const geoOpt = getGEOOptimizer();
+
+            const geoAnalysis = geoOpt.analyzeGEOReadiness(fullContent);
+            if (geoAnalysis.score < 60) {
+                const geoResult = await geoOpt.injectAttributions(fullContent, keyword);
+                if (geoResult.changes.length > 0 && geoResult.afterScore > geoResult.beforeScore) {
+                    fullContent = geoResult.content;
+                    log.info('Stage: GEO optimization applied', {
+                        stage: 'geo_optimization',
+                        beforeScore: geoResult.beforeScore,
+                        afterScore: geoResult.afterScore,
+                        changesApplied: geoResult.changes.length,
+                        duration: Date.now() - geoStart,
+                    });
+                } else {
+                    log.info('Stage: GEO optimization skipped (no improvement)', {
+                        stage: 'geo_optimization',
+                        score: geoAnalysis.score,
+                        duration: Date.now() - geoStart,
+                    });
+                }
+            } else {
+                log.info('Stage: GEO readiness sufficient', { stage: 'geo_optimization', score: geoAnalysis.score, duration: Date.now() - geoStart });
+            }
+        } catch (geoErr) {
+            log.warn('GEO optimization failed (non-fatal)', { stage: 'geo_optimization', duration: Date.now() - geoStart, error: String(geoErr) });
+        }
 
         // ── 10. Internal Link Injection ─────────────────────────
         if (options?.siteId) {
+            const linkStart = Date.now();
             try {
                 const linking = getLinkingEngine();
                 // Use buildSiteLinkGraph for keyword-aware post matching
@@ -605,11 +846,11 @@ ${sections.join('\n\n')}`;
                     );
                     if (suggestions.length > 0) {
                         fullContent = linking.insertLinksIntoContent(fullContent, suggestions);
-                        console.log(`[ContentWriter] Injected ${suggestions.length} internal links`);
+                        log.info('Stage: Internal linking', { stage: 'internal_linking', linksInjected: suggestions.length, duration: Date.now() - linkStart });
                     }
                 }
             } catch (linkErr) {
-                console.warn('[ContentWriter] Internal link injection failed:', linkErr);
+                log.warn('Internal link injection failed', { stage: 'internal_linking', duration: Date.now() - linkStart, error: String(linkErr) });
             }
         }
 
@@ -628,14 +869,33 @@ ${sections.join('\n\n')}`;
             fullContent = videoResult.html;
             videoMetas = videoResult.videos;
         } catch (mediaErr) {
-            console.warn('[ContentWriter] Media resolution failed (non-fatal):', mediaErr);
+            log.warn('Media resolution failed (non-fatal)', { stage: 'media_resolution', error: String(mediaErr) });
         }
 
         // ── QUALITY GATE ────────────────────────────────────────
+        const qgStart = Date.now();
         const qualityResult = await runQualityGate(
             fullContent, keyword, options?.language || 'en'
         );
         fullContent = qualityResult.content;
+        log.info('Stage: Quality gate', {
+            stage: 'quality_gate',
+            naturalnessScore: qualityResult.metrics?.naturalnessScore,
+            factualityScore: qualityResult.metrics?.factualityScore,
+            qualityGatePasses: qualityResult.metrics?.qualityGatePasses,
+            contentLength: fullContent.length,
+            duration: Date.now() - qgStart,
+        });
+
+        // ── CONTENT MODERATION ──────────────────────────────────
+        const modResult = moderateContent(fullContent, options?.niche);
+        if (modResult.disclaimers.length > 0) {
+            fullContent = injectDisclaimers(fullContent, modResult.disclaimers);
+            log.info('YMYL disclaimers injected', { stage: 'content_moderation', ymylCategory: modResult.ymylCategory });
+        }
+        if (!modResult.safe) {
+            log.warn('Content moderation flagged critical issues', { stage: 'content_moderation', summary: modResult.summary });
+        }
 
         // ── Populate FAQ answers from generated HTML ─────────
         const faqSection = this.extractFAQFromHTML(fullContent, outline.faqQuestions || []);
@@ -643,14 +903,14 @@ ${sections.join('\n\n')}`;
         // Generate schema markup
         const generated: GeneratedContent = {
             title: outline.title,
-            metaTitle: outline.metaTitle,
-            metaDescription: outline.metaDescription,
+            metaTitle: outline.metaTitle || outline.title || keyword,
+            metaDescription: outline.metaDescription || `Comprehensive guide to ${keyword}. Expert insights, data-driven analysis, and actionable recommendations.`,
             content: fullContent,
             faqSection,
             schemaMarkup: generateSchemaMarkup({
                 title: outline.title,
-                metaTitle: outline.metaTitle,
-                metaDescription: outline.metaDescription,
+                metaTitle: outline.metaTitle || outline.title || keyword,
+                metaDescription: outline.metaDescription || `Comprehensive guide to ${keyword}.`,
                 content: fullContent,
                 faqSection,
                 schemaMarkup: {},
@@ -663,6 +923,15 @@ ${sections.join('\n\n')}`;
             videoMetas,
         };
 
+        const totalWordCount = countWordsInHTML(fullContent);
+        log.info('Stage: Final — pipeline complete', {
+            stage: 'final',
+            totalWordCount,
+            contentLength: fullContent.length,
+            totalDuration: Date.now() - pipelineStart,
+            sectionCount: outline.sections.length,
+        });
+
         return generated;
     }
 
@@ -674,8 +943,19 @@ ${sections.join('\n\n')}`;
         sectionIndex: number,
         lang: string,
         langNote: string,
-        contextNote: string = ''
+        contextNote: string = '',
+        articleType: string = 'article'
     ): Promise<string> {
+        // Safe defaults for properties that may be missing when outline comes from frontend
+        const h2 = section.h2 || (section as unknown as Record<string, string>).heading || `Section ${sectionIndex + 1}`;
+        const h3s = section.h3s || [];
+        const targetWords = section.targetWords || (section as unknown as Record<string, number>).estimatedWords || 400;
+        const contentType = section.contentType || 'explanation';
+        const snippetTarget = section.snippetTarget || (section as unknown as Record<string, string>).snippetType || 'none';
+        const competitorExcerpts = section.competitorExcerpts || [];
+        const keyDataPoints = section.keyDataPoints || [];
+        const writingAngle = section.writingAngle || 'Cover this topic thoroughly with specific examples and actionable insights';
+
         const contentTypeInstructions: Record<string, string> = {
             explanation: 'Explain the concept clearly with specific examples and real-world context. Use analogies where helpful.',
             comparison: 'Compare options with specific metrics, features, and trade-offs. Be opinionated about which is better and why.',
@@ -692,25 +972,32 @@ ${sections.join('\n\n')}`;
             none: '',
         };
 
-        const competitorContext = section.competitorExcerpts.length > 0
-            ? `\nCOMPETITOR REFERENCE (your section must be MORE detailed and specific than these):\n${section.competitorExcerpts.join('\n---\n')}`
+        const competitorContext = competitorExcerpts.length > 0
+            ? `\nCOMPETITOR REFERENCE (your section must be MORE detailed and specific than these):\n${competitorExcerpts.join('\n---\n')}`
             : '';
 
-        const dataPoints = section.keyDataPoints.length > 0
-            ? `\nKEY DATA POINTS to include: ${section.keyDataPoints.join('; ')}`
+        const dataPoints = keyDataPoints.length > 0
+            ? `\nKEY DATA POINTS to include: ${keyDataPoints.join('; ')}`
             : '';
+
+        // Article-level type rule (verdict/winner/CTA semantics the coarse
+        // section enum can't carry) + CTA rules for monetizable types.
+        const typeRule = ARTICLE_TYPE_BODY_RULES[articleType] || '';
+        const articleTypeRule = typeRule ? `\nCONTENT-TYPE RULE: ${typeRule}` : '';
+        const monetizableTypes = ['review', 'listicle', 'comparison', 'alternatives'];
+        const ctaRuleIfApplicable = monetizableTypes.includes(articleType) ? `\n${CTA_RULES}` : '';
 
         const sectionPrompt = `Write section ${sectionIndex + 1} of an article about "${keyword}".
 
-HEADING: <h2 id="section-${sectionIndex + 1}">${section.h2}</h2>
-SUB-HEADINGS: ${section.h3s.map(h => `<h3>${h}</h3>`).join(', ')}
+HEADING: <h2 id="section-${sectionIndex + 1}">${h2}</h2>
+SUB-HEADINGS: ${h3s.map(h => `<h3>${h}</h3>`).join(', ')}
 
-TARGET WORD COUNT: ${section.targetWords} words
-WRITING APPROACH: ${contentTypeInstructions[section.contentType] || contentTypeInstructions.explanation}
-WRITING ANGLE: ${section.writingAngle}
-${snippetInstructions[section.snippetTarget] || ''}
+TARGET WORD COUNT: ${targetWords} words
+WRITING APPROACH: ${contentTypeInstructions[contentType] || contentTypeInstructions.explanation}
+WRITING ANGLE: ${writingAngle}
+${snippetInstructions[snippetTarget] || ''}
 ${competitorContext}
-${dataPoints}${contextNote}
+${dataPoints}${contextNote}${articleTypeRule}
 
 RULES:
 - Start with the H2 heading tag (include id="section-${sectionIndex + 1}")
@@ -720,24 +1007,29 @@ RULES:
 - Include "${keyword}" or a semantic variation at least once in this section's content
 - Use <strong> for key terms, <a> for citations, <ul>/<ol> for lists
 - Write with personality and specific opinions where appropriate
-- Return HTML ONLY (h2, h3, p, ul, ol, li, strong, a, table, blockquote)${langNote}
-${HUMAN_STYLE_CONTENT_RULES}`;
+- Include 1 callout box (tip, warning, or note) if this section has actionable advice or important warnings. Use: <div class="callout-{type}"><div class="callout-icon">{emoji}</div><div class="callout-content"><strong class="callout-title">{Title}</strong><p>{content}</p></div></div>
+- Return HTML ONLY (h2, h3, p, ul, ol, li, strong, a, table, blockquote, dl, dt, dd, pre, code, figure, figcaption, div.callout-tip, div.callout-warning, div.callout-note, div.callout-info, div.pull-quote, div.stat-highlight, div.cta-box)${langNote}
+- Do NOT reuse the H2 heading as a question that other sections already answer. Each section must have a UNIQUE heading.
+- Return ONLY raw HTML tags. Do NOT wrap output in markdown code fences (no \`\`\`html or \`\`\`). Just the HTML tags directly.
+${HUMAN_STYLE_CONTENT_RULES}
+${SECTION_SEO_RULES}
+${EXPERTISE_SIGNALS}${ctaRuleIfApplicable}`;
 
         const MAX_SECTION_RETRIES = 2;
         for (let attempt = 0; attempt <= MAX_SECTION_RETRIES; attempt++) {
             try {
                 let result = await ai.generate('section_writing', sectionPrompt, {
-                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You are creating ONE section of a long-form article. Include specific data, examples, and actionable insights. Return valid HTML only — no markdown syntax.`,
+                    systemPrompt: `${HUMAN_STYLE_SYSTEM_PROMPT} You are creating ONE section of a long-form article. Include specific data, examples, and actionable insights. Return valid HTML only — no markdown syntax, no code fences (no \`\`\`html blocks). Output raw HTML tags directly.`,
                     temperature: pickTemperature(keyword, 'section') + (attempt * 0.05),
-                    maxTokens: 2048,
+                    maxTokens: 4096,
                 });
                 result = cleanAIPatterns(result);
                 if (result && result.trim().length > 50) {
                     return result;
                 }
-                console.warn(`[ContentWriter] Section "${section.h2}" returned empty (attempt ${attempt + 1})`);
+                logger.warn('Section returned empty', { action: 'generateSection', section: section.h2, attempt: attempt + 1 });
             } catch (error) {
-                console.error(`[ContentWriter] Section "${section.h2}" failed (attempt ${attempt + 1}/${MAX_SECTION_RETRIES + 1}):`, error);
+                logger.error('Section generation failed', { action: 'generateSection', section: section.h2, attempt: attempt + 1, maxAttempts: MAX_SECTION_RETRIES + 1 }, error);
                 if (attempt < MAX_SECTION_RETRIES) {
                     // Wait before retry (1s, 2s)
                     await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
@@ -746,9 +1038,9 @@ ${HUMAN_STYLE_CONTENT_RULES}`;
         }
 
         // Final fallback after all retries exhausted
-        console.error(`[ContentWriter] All retries exhausted for section "${section.h2}" — using placeholder`);
-        return `<h2 id="section-${sectionIndex + 1}">${section.h2}</h2>
-<p>This section covers ${section.h2.toLowerCase()} in detail. ${section.h3s.map(h => h).join(', ')} are key aspects to consider.</p>`;
+        logger.error('All retries exhausted for section — using placeholder', { action: 'generateSection', section: h2 });
+        return `<h2 id="section-${sectionIndex + 1}">${h2}</h2>
+<p>This section covers ${h2.toLowerCase()} in detail. ${h3s.map(h => h).join(', ')} are key aspects to consider.</p>`;
     }
 
     // ── Extract FAQ answers from generated HTML ────────────────────
@@ -849,7 +1141,7 @@ Return ONLY the HTML list items for sources that are relevant. Skip irrelevant o
                         }
                     }
                 } catch (serpErr) {
-                    console.warn('[ContentWriter] SERP source search failed:', serpErr);
+                    logger.warn('SERP source search failed', { action: 'generateSourcesSection' }, serpErr);
                 }
             }
 
@@ -886,7 +1178,7 @@ Return ONLY the HTML list items, nothing else.`;
 </div>`;
             }
         } catch (error) {
-            console.error('[ContentWriter] Sources generation failed:', error);
+            logger.error('Sources generation failed', { action: 'generateSourcesSection' }, error);
         }
 
         // Fallback: honest disclosure instead of vague platitude
@@ -928,14 +1220,14 @@ Return ONLY the HTML list items, nothing else.`;
                 if (response.status >= 200 && response.status < 400) {
                     verified.push(source);
                 } else {
-                    console.warn(`[ContentWriter] Source URL returned ${response.status}: ${source.url}`);
+                    logger.warn('Source URL returned non-OK status', { action: 'verifySourceUrls', url: source.url, status: response.status });
                 }
             } catch {
-                console.warn(`[ContentWriter] Source URL unreachable: ${source.url}`);
+                logger.warn('Source URL unreachable', { action: 'verifySourceUrls', url: source.url });
             }
         }
 
-        console.log(`[ContentWriter] Source verification: ${verified.length}/${sources.slice(0, 10).length} URLs passed`);
+        logger.info('Source URL verification complete', { action: 'verifySourceUrls', verified: verified.length, total: sources.slice(0, 10).length });
         return verified;
     }
 

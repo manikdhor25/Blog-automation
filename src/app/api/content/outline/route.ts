@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
         if (!parsed.success) {
             return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors }, { status: 400 });
         }
-        const { keyword, niche, existingPosts } = parsed.data;
+        const { keyword, niche, existingPosts, content_type } = parsed.data;
 
         const ai = getAIRouter();
         await ai.loadKeys(auth.supabase);
@@ -133,6 +133,7 @@ ${niche ? `Niche/Industry: ${niche}` : ''}
 ${competitorHeadings.length > 0 ? `\nCompetitor headings found:\n${competitorHeadings.slice(0, 20).map(h => `- ${h}`).join('\n')}` : ''}
 ${paaQuestions.length > 0 ? `\nPeople Also Ask questions:\n${paaQuestions.map(q => `- ${q}`).join('\n')}` : ''}
 ${(existingPosts?.length ?? 0) > 0 ? `\nExisting site posts (for internal linking opportunities):\n${existingPosts!.slice(0, 10).map((p: string) => `- ${p}`).join('\n')}` : ''}
+${content_type && content_type !== 'article' ? `\nCONTENT TYPE: ${content_type.toUpperCase().replace(/_/g, ' ')}\nGenerate the outline structure specifically for a ${content_type.replace(/_/g, ' ')} article format. Follow the conventions of this content type (e.g., reviews need pros/cons/verdict; how-tos need numbered steps; listicles need ranked items; comparisons need feature-by-feature sections).` : ''}
 
 Create a comprehensive outline that will:
 1. Cover ALL competitor topics plus unique angles they missed

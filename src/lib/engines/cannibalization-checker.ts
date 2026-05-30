@@ -149,3 +149,85 @@ export async function checkCannibalization(
         severity,
     };
 }
+
+// ── #61: Cannibalization Resolution Strategies ────────────────
+// Provides actionable resolution steps based on cannibalization severity
+
+export interface CannibalizationResolution {
+    action: 'merge' | 'redirect' | 'differentiate' | 'support_content' | 'ignore';
+    description: string;
+    steps: string[];
+    priority: 'critical' | 'high' | 'medium' | 'low';
+}
+
+export function resolveCannibalization(report: CannibalizationReport): CannibalizationResolution[] {
+    if (!report.hasCannibalization) return [];
+
+    return report.warnings.map(warning => {
+        // High similarity (>0.8) — merge or redirect
+        if (warning.similarity >= 0.8) {
+            return {
+                action: 'merge' as const,
+                description: `"${warning.existingTitle}" is nearly identical — merge into one comprehensive article`,
+                steps: [
+                    `Combine unique content from both articles targeting "${warning.existingKeyword}"`,
+                    'Set a 301 redirect from the weaker article to the stronger one',
+                    'Update all internal links pointing to the redirected URL',
+                    'Re-submit the canonical URL to Search Console for re-indexing',
+                ],
+                priority: 'critical' as const,
+            };
+        }
+
+        // Medium-high similarity (0.6-0.8) — differentiate intent
+        if (warning.similarity >= 0.6) {
+            if (warning.type === 'keyword_overlap') {
+                return {
+                    action: 'differentiate' as const,
+                    description: `Differentiate search intent between this article and "${warning.existingTitle}"`,
+                    steps: [
+                        `Assign different search intents: one informational, one commercial/transactional`,
+                        `Rewrite the title and H1 to clearly target a different angle for "${warning.existingKeyword}"`,
+                        `Update meta description to reflect the unique value proposition`,
+                        `Add internal links between both articles with descriptive anchor text`,
+                    ],
+                    priority: 'high' as const,
+                };
+            }
+            return {
+                action: 'redirect' as const,
+                description: `Strong title overlap with "${warning.existingTitle}" — consider 301 redirect`,
+                steps: [
+                    'Determine which article has better rankings and engagement metrics',
+                    'Merge unique content from the weaker article into the stronger one',
+                    'Set up 301 redirect from weaker to stronger URL',
+                    'Audit and update internal links that referenced the redirected page',
+                ],
+                priority: 'high' as const,
+            };
+        }
+
+        // Lower similarity (0.35-0.6) — convert to supporting content
+        if (warning.similarity >= 0.35) {
+            return {
+                action: 'support_content' as const,
+                description: `Convert to supporting content that links up to "${warning.existingTitle}" as pillar`,
+                steps: [
+                    `Target a long-tail variation of "${warning.existingKeyword}" instead of the head term`,
+                    `Add prominent internal link to the pillar article in the first 200 words`,
+                    `Focus on a specific sub-topic or angle not covered in the pillar`,
+                    `Use different content format (how-to vs listicle vs comparison)`,
+                ],
+                priority: 'medium' as const,
+            };
+        }
+
+        // Minimal overlap — ignore
+        return {
+            action: 'ignore' as const,
+            description: `Minor overlap with "${warning.existingTitle}" — no action needed`,
+            steps: ['Monitor rankings for both pages over the next 30 days'],
+            priority: 'low' as const,
+        };
+    });
+}

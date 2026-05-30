@@ -14,7 +14,7 @@
 .sidebar {
   width: 260px;
   background: var(--gradient-card);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(12px);
   border-right: 1px solid var(--border-subtle);
   padding: 24px 0;
   position: fixed;

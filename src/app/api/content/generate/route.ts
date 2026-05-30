@@ -6,8 +6,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { getSERPIntelligence, DeepPageContent } from '@/lib/engines/serp-intelligence';
+import { getSERPIntelligence, DeepPageContent, CompetitorBlueprint } from '@/lib/engines/serp-intelligence';
+import { SERPResult } from '@/lib/types';
 import { getContentWriter } from '@/lib/engines/content-writer';
+import { countWordsInHTML, detectSearchIntent } from '@/lib/engines/content-utils';
 import { getContentScorer } from '@/lib/engines/content-scorer';
 import { getLinkingEngine, LinkSuggestion } from '@/lib/engines/linking-engine';
 import { generateSEOSlug, validateMeta, calculateDynamicWordCount, injectSchemaJsonLD } from '@/lib/utils/seo-utils';
@@ -21,6 +23,7 @@ import { scoreNaturalness } from '@/lib/engines/naturalness-scorer';
 import { generateOutline } from '@/lib/engines/outline-generator';
 import { runQualityControl } from '@/lib/engines/quality-control-engine';
 import { buildUnifiedScore } from '@/lib/engines/score-normalizer';
+import { getPostCostReport } from '@/lib/engines/cost-calculator';
 
 export async function POST(request: NextRequest) {
     try {
@@ -35,7 +38,8 @@ export async function POST(request: NextRequest) {
         if (!parsed.success) {
             return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten().fieldErrors }, { status: 400 });
         }
-        const { keyword, site_id, action, language, is_cluster } = parsed.data;
+        const { keyword, site_id, action, language, is_cluster, content_type } = parsed.data;
+        const existing_outline = body.existing_outline; // Not in schema, but accepted as passthrough
 
         // Track generation start time for content records
         const generationStartTime = Date.now();
@@ -55,24 +59,33 @@ export async function POST(request: NextRequest) {
 
         try {
 
-            // ── Step 1: Search Google US (10 results) ──────────────
-            const searchResults = serp.isConfigured()
-                ? await serp.searchGoogle(keyword, { num: 10 })
-                : { results: [], totalResults: 0, searchTime: 0 };
+            // ── Step 1-3: Research (skip if we have an outline) ────
+            let searchResults: { results: Omit<SERPResult, 'id' | 'keyword_id' | 'fetched_at'>[]; totalResults: number; searchTime: number } = { results: [], totalResults: 0, searchTime: 0 };
+            let competitors: DeepPageContent[] = [];
+            let blueprint: CompetitorBlueprint;
+            let paaQuestions: string[] = [];
 
-            // ── Step 2: Deep extract top 10 competitor pages ───────
-            const competitors: DeepPageContent[] = [];
-            const fetchPromises = searchResults.results.slice(0, 10).map(async (result) => {
-                const deep = await serp.deepExtractContent(result.url, result.title);
-                if (deep) competitors.push(deep);
-            });
-            await Promise.all(fetchPromises);
+            if (!existing_outline?.sections?.length) {
+                searchResults = serp.isConfigured()
+                    ? await serp.searchGoogle(keyword, { num: 10 })
+                    : { results: [], totalResults: 0, searchTime: 0 };
 
-            // ── Step 3: Build competitor blueprint ─────────────────
-            const blueprint = await serp.buildCompetitorBlueprint(competitors, keyword);
+                const fetchPromises = searchResults.results.slice(0, 10).map(async (result) => {
+                    const deep = await serp.deepExtractContent(result.url, result.title);
+                    if (deep) competitors.push(deep);
+                });
+                await Promise.all(fetchPromises);
 
-            // Extract PAA questions
-            const paaQuestions = serp.extractPAAQuestions(searchResults.results);
+                blueprint = await serp.buildCompetitorBlueprint(competitors, keyword);
+                paaQuestions = serp.extractPAAQuestions(searchResults.results);
+            } else {
+                blueprint = {
+                    avgWordCount: 0, avgSectionCount: 0,
+                    consensusHeadings: [], contentGaps: [], uniqueAngles: [],
+                    snippetFormats: [], keyStatistics: [],
+                    faqPatterns: [], tableTopics: [], topCompetitorSections: [],
+                };
+            }
 
             if (action === 'research_only') {
                 return NextResponse.json({
@@ -108,19 +121,28 @@ export async function POST(request: NextRequest) {
                 }
             }
 
-            // ── Step 5: Generate AI outline from blueprint ─────────
+            // ── Step 5: Generate or reuse outline ──────────────────
             const isCluster = is_cluster || false;
-            // P1 Fix: Dynamic word count based on competitor data
-            const competitorCounts = competitors.map(c => c.totalWordCount).filter(w => w > 0);
-            const minWords = calculateDynamicWordCount(competitorCounts, isCluster);
+            let outline;
+            let minWords = 1500;
 
-            const outline = await generateOutline(keyword, blueprint, competitors, {
-                niche: siteNiche,
-                language: language || 'en',
-                isCluster,
-                paaQuestions,
-                minWordCount: minWords,
-            });
+            if (existing_outline?.sections?.length) {
+                console.log(`[generate] Using existing outline: "${existing_outline.title}", ${existing_outline.sections.length} sections`);
+                outline = existing_outline;
+                minWords = existing_outline.totalTargetWords || 1500;
+            } else {
+                const competitorCounts = competitors.map(c => c.totalWordCount).filter(w => w > 0);
+                minWords = calculateDynamicWordCount(competitorCounts, isCluster);
+
+                outline = await generateOutline(keyword, blueprint, competitors, {
+                    niche: siteNiche,
+                    language: language || 'en',
+                    isCluster,
+                    paaQuestions,
+                    minWordCount: minWords,
+                    contentType: content_type || undefined,
+                });
+            }
 
             // ── Step 6: Section-by-section content generation ──────
             const generated = await writer.generateFromOutline(keyword, outline, {
@@ -130,21 +152,25 @@ export async function POST(request: NextRequest) {
                 siteId: site_id || undefined,
             });
 
-            // ── Step 7: Suggest & insert links ─────────────────────
+            // ── Step 7: Suggest & insert links (PARALLELIZED) ──
             let internalLinks: LinkSuggestion[] = [];
-            if (site_id && sitePosts.length > 0) {
-                internalLinks = await linker.suggestInternalLinks(
-                    generated.content, generated.title, sitePosts, siteUrl
-                );
-            }
-            const externalLinks = await linker.suggestExternalLinks(generated.content, keyword);
+            let externalLinks: LinkSuggestion[] = [];
+
+            const [internalResult, externalResult] = await Promise.all([
+                (site_id && sitePosts.length > 0)
+                    ? linker.suggestInternalLinks(generated.content, generated.title, sitePosts, siteUrl)
+                    : Promise.resolve([] as LinkSuggestion[]),
+                linker.suggestExternalLinks(generated.content, keyword),
+            ]);
+            internalLinks = internalResult;
+            externalLinks = externalResult;
 
             const allLinks = [...internalLinks, ...externalLinks];
             if (allLinks.length > 0) {
                 generated.content = linker.insertLinksIntoContent(generated.content, allLinks);
             }
 
-            // ── Step 8: Score content ──────────────────────────────
+            // ── Step 8: Score content + analyses (PARALLELIZED) ──
             // Build legacy competitorData for scorer compatibility
             const competitorData = competitors.map(c => ({
                 title: c.title,
@@ -153,16 +179,20 @@ export async function POST(request: NextRequest) {
                 headings: c.headings.map(h => h.text),
             }));
 
-            const score = await scorer.scoreContent(generated.content, keyword, {
-                competitorWordCounts: competitorData.map(c => c.wordCount),
-                competitorContents: competitorData.map(c => c.content),
-                hasSchema: Object.keys(generated.schemaMarkup).length > 0,
-                internalLinkCount: internalLinks.length,
-                externalLinkCount: externalLinks.length,
-            });
+            const [score, factuality, naturalnessResult] = await Promise.all([
+                scorer.scoreContent(generated.content, keyword, {
+                    competitorWordCounts: competitorData.map(c => c.wordCount),
+                    competitorContents: competitorData.map(c => c.content),
+                    hasSchema: Object.keys(generated.schemaMarkup).length > 0,
+                    internalLinkCount: internalLinks.length,
+                    externalLinkCount: externalLinks.length,
+                }),
+                checkFactuality(generated.content, keyword),
+                Promise.resolve(scoreNaturalness(generated.content)),
+            ]);
+            const naturalness = naturalnessResult;
 
             // ── Step 9: Schema injection + SEO slug + meta ─────────
-            // P0 Fix: Inject JSON-LD schema directly into content HTML
             if (generated.schemaMarkup && Object.keys(generated.schemaMarkup).length > 0) {
                 generated.content = injectSchemaJsonLD(generated.content, generated.schemaMarkup);
             }
@@ -175,13 +205,9 @@ export async function POST(request: NextRequest) {
                 slug
             );
 
-            // ── Step 10: Factuality + naturalness ──────────────────
-            const factuality = await checkFactuality(generated.content, keyword);
-            const naturalness = scoreNaturalness(generated.content);
-
             // ── Save content record to database ─────────────────
             const generationDuration = Date.now() - generationStartTime;
-            const wordCount = generated.content.replace(/<[^>]+>/g, ' ').split(/\s+/).filter((w: string) => w.length > 0).length;
+            const wordCount = countWordsInHTML(generated.content);
 
             // Get site info for denormalized storage
             let recordSiteName = '';
@@ -201,7 +227,7 @@ export async function POST(request: NextRequest) {
                     keyword,
                     title: generated.title || keyword,
                     slug,
-                    content_type: isCluster ? 'cluster' : 'article',
+                    content_type: content_type || (isCluster ? 'cluster' : 'article'),
                     language: language || 'en',
                     ai_provider: usedProvider,
                     ai_model: '',
@@ -236,26 +262,36 @@ export async function POST(request: NextRequest) {
                     site_name: recordSiteName,
                     site_url: siteUrl,
                     publish_status: 'generated',
+                    content_html: generated.content,
                 });
             } catch (recordErr) {
                 console.error('[generate] Failed to save content record:', recordErr);
             }
 
-            // ── Step 10.5: Unified scoring (QC + ContentScorer) ────
+            // ── Step 10: Unified scoring (QC + ContentScorer) ────
             const qcReport = runQualityControl({
                 primaryKeyword: keyword,
                 secondaryKeywords: [],
-                searchIntent: 'informational',
+                searchIntent: detectSearchIntent(keyword),
                 targetAudience: 'general',
                 content: generated.content,
             });
             const unifiedScore = buildUnifiedScore(score, qcReport);
+
+            // ── Step 11: Get cost report for this generation ─────
+            let costReport = null;
+            try {
+                costReport = await getPostCostReport(sessionId, auth.user.id);
+            } catch (costErr) {
+                console.error('[generate] Failed to get cost report:', costErr);
+            }
 
             return NextResponse.json({
                 content: generated,
                 score: unifiedScore,
                 outline,
                 blueprint,
+                costReport,
                 competitorInsight: {
                     avgWordCount: blueprint.avgWordCount,
                     commonHeadings: blueprint.consensusHeadings.map(h => h.heading),

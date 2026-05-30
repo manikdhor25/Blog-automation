@@ -1,0 +1,807 @@
+/* ============================================================
+   RankMaster Pro — Content Formatting Styles
+   Rich content formatting for generated blog articles.
+   Callouts, pull quotes, stat highlights, accordions,
+   code blocks, definition lists, footnotes, progress bar.
+   ============================================================ */
+
+/* ── 1. Callout Boxes ───────────────────────────────────────── */
+
+.callout-tip,
+.callout-warning,
+.callout-info,
+.callout-note {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 16px 20px;
+    margin: 1.4em 0;
+    border-left: 4px solid var(--accent-primary, #6366f1);
+    border-radius: 0 var(--radius-md, 8px) var(--radius-md, 8px) 0;
+    background: rgba(99, 102, 241, 0.06);
+    backdrop-filter: blur(4px);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.callout-tip:hover,
+.callout-warning:hover,
+.callout-info:hover,
+.callout-note:hover {
+    transform: translateX(2px);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.callout-tip {
+    border-left-color: #22c55e;
+    background: rgba(34, 197, 94, 0.06);
+}
+
+.callout-warning {
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.06);
+}
+
+.callout-info {
+    border-left-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.06);
+}
+
+.callout-note {
+    border-left-color: #a78bfa;
+    background: rgba(167, 139, 250, 0.06);
+}
+
+.callout-icon {
+    flex-shrink: 0;
+    font-size: 1.3rem;
+    line-height: 1.4;
+    width: 28px;
+    text-align: center;
+}
+
+.callout-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.callout-title {
+    display: block;
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+    letter-spacing: 0.01em;
+}
+
+.callout-tip .callout-title { color: #22c55e; }
+.callout-warning .callout-title { color: #f59e0b; }
+.callout-info .callout-title { color: #3b82f6; }
+.callout-note .callout-title { color: #a78bfa; }
+
+.callout-content p {
+    margin: 0;
+    line-height: 1.7;
+    color: var(--text-secondary, #a1a1aa);
+}
+
+/* ── 2. Pull Quotes ─────────────────────────────────────────── */
+
+.pull-quote {
+    position: relative;
+    border-top: 2px solid var(--accent-primary, #6366f1);
+    border-bottom: 2px solid var(--accent-primary, #6366f1);
+    padding: 28px 24px;
+    margin: 2em auto;
+    max-width: 600px;
+    text-align: center;
+}
+
+.pull-quote::before {
+    content: '\201C';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-primary, #09090b);
+    padding: 0 12px;
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent-primary, #6366f1);
+    opacity: 0.5;
+}
+
+.pull-quote blockquote {
+    border: none;
+    margin: 0;
+    padding: 0;
+    font-size: 1.15rem;
+    font-style: italic;
+    line-height: 1.7;
+    color: var(--text-primary, #fafafa);
+    font-weight: 400;
+    background: none;
+}
+
+.pull-quote figcaption {
+    font-style: normal;
+    font-size: 0.85rem;
+    color: var(--text-muted, #71717a);
+    margin-top: 12px;
+    font-weight: 500;
+}
+
+/* ── 3. Stat Highlight Boxes ────────────────────────────────── */
+
+.stat-highlight {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 28px;
+    margin: 1.6em auto;
+    max-width: 320px;
+    border-radius: var(--radius-md, 8px);
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.08) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-highlight:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);
+}
+
+.stat-number {
+    font-size: 2.6rem;
+    font-weight: 800;
+    line-height: 1;
+    background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+}
+
+.stat-label {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-secondary, #a1a1aa);
+    line-height: 1.4;
+}
+
+.stat-source {
+    font-size: 0.75rem;
+    color: var(--text-muted, #71717a);
+    margin-top: 8px;
+    font-style: italic;
+}
+
+/* ── 4. Responsive Table Wrapper ────────────────────────────── */
+
+.responsive-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 1.4em 0;
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+}
+
+.responsive-table-wrapper::-webkit-scrollbar {
+    height: 6px;
+}
+
+.responsive-table-wrapper::-webkit-scrollbar-track {
+    background: var(--bg-secondary, #18181b);
+    border-radius: 3px;
+}
+
+.responsive-table-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-subtle, rgba(63, 63, 70, 0.5));
+    border-radius: 3px;
+}
+
+.responsive-table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted, #71717a);
+}
+
+.responsive-table-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+    border: none;
+}
+
+.responsive-table-wrapper thead th {
+    background: rgba(99, 102, 241, 0.08);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-primary, #fafafa);
+    padding: 12px 16px;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 2px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+}
+
+.responsive-table-wrapper tbody td {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    color: var(--text-secondary, #a1a1aa);
+    border-bottom: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.3));
+}
+
+.responsive-table-wrapper tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.responsive-table-wrapper tbody tr:hover {
+    background: rgba(99, 102, 241, 0.04);
+    transition: background 0.15s ease;
+}
+
+.responsive-table-wrapper caption {
+    padding: 10px 16px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted, #71717a);
+    text-align: left;
+    caption-side: top;
+}
+
+/* ── 5. Code Blocks with Syntax Highlighting ────────────────── */
+
+.code-block-wrapper {
+    position: relative;
+    margin: 1.4em 0;
+    border-radius: var(--radius-md, 8px);
+    overflow: hidden;
+    background: #0d1117;
+    border: 1px solid rgba(63, 63, 70, 0.4);
+}
+
+.code-language {
+    position: absolute;
+    top: 0;
+    right: 44px;
+    padding: 3px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8b949e;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 0 0 var(--radius-sm, 4px) var(--radius-sm, 4px);
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #8b949e;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+.code-copy-btn:hover {
+    color: #fafafa;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.code-block-wrapper pre {
+    margin: 0;
+    padding: 36px 20px 16px;
+    overflow-x: auto;
+    background: transparent;
+    border: none;
+}
+
+.code-block-wrapper code {
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    font-size: 0.85rem;
+    line-height: 1.65;
+    color: #e6edf3;
+    background: transparent;
+    padding: 0;
+}
+
+.code-line {
+    display: block;
+    padding: 0 0 0 0;
+}
+
+.code-line-numbers .code-line {
+    padding-left: 3.5em;
+    position: relative;
+}
+
+.code-line-numbers .code-line::before {
+    content: attr(data-line);
+    position: absolute;
+    left: 0;
+    width: 2.8em;
+    text-align: right;
+    color: #484f58;
+    font-size: 0.8rem;
+    user-select: none;
+    padding-right: 1em;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Basic token classes for syntax */
+.token-keyword { color: #ff7b72; }
+.token-string { color: #a5d6ff; }
+.token-comment { color: #8b949e; font-style: italic; }
+.token-function { color: #d2a8ff; }
+.token-number { color: #79c0ff; }
+.token-operator { color: #ff7b72; }
+.token-class { color: #ffa657; }
+.token-property { color: #79c0ff; }
+.token-tag { color: #7ee787; }
+.token-attr { color: #79c0ff; }
+
+/* ── 6. Definition Lists ────────────────────────────────────── */
+
+dl {
+    margin: 1.4em 0;
+    padding: 0;
+}
+
+dt {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary, #fafafa);
+    padding: 8px 0 2px;
+    margin-top: 12px;
+}
+
+dt:first-child {
+    margin-top: 0;
+}
+
+dd {
+    margin: 0 0 0 0;
+    padding: 4px 0 12px 16px;
+    border-left: 3px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+    color: var(--text-secondary, #a1a1aa);
+    line-height: 1.7;
+}
+
+/* ── 7. Accordion / Collapsible FAQ ─────────────────────────── */
+
+.accordion-faq {
+    margin: 1.4em 0;
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+    border-radius: var(--radius-md, 8px);
+    overflow: hidden;
+}
+
+.accordion-faq-item {
+    border-bottom: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.3));
+}
+
+.accordion-faq-item:last-child {
+    border-bottom: none;
+}
+
+.accordion-faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-primary, #fafafa);
+    cursor: pointer;
+    list-style: none;
+    transition: background 0.15s ease;
+    user-select: none;
+}
+
+.accordion-faq-item summary::-webkit-details-marker {
+    display: none;
+}
+
+.accordion-faq-item summary::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--text-muted, #71717a);
+    border-bottom: 2px solid var(--text-muted, #71717a);
+    transform: rotate(-45deg);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    margin-left: 16px;
+}
+
+.accordion-faq-item[open] summary::after {
+    transform: rotate(45deg);
+}
+
+.accordion-faq-item summary:hover {
+    background: rgba(99, 102, 241, 0.04);
+}
+
+.accordion-faq-answer {
+    padding: 0 20px 16px 20px;
+    color: var(--text-secondary, #a1a1aa);
+    line-height: 1.7;
+    animation: accordionFadeIn 0.2s ease;
+}
+
+@keyframes accordionFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.accordion-faq-answer p {
+    margin: 0 0 8px;
+}
+
+.accordion-faq-answer p:last-child {
+    margin-bottom: 0;
+}
+
+/* ── 8. Footnotes ───────────────────────────────────────────── */
+
+.footnotes-section {
+    margin-top: 3em;
+    padding-top: 1.5em;
+    border-top: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+}
+
+.footnotes-section hr {
+    display: none;
+}
+
+.footnotes-section ol {
+    padding-left: 1.6em;
+    font-size: 0.85rem;
+    color: var(--text-muted, #71717a);
+    line-height: 1.7;
+}
+
+.footnotes-section li {
+    margin-bottom: 6px;
+}
+
+.footnote-ref {
+    font-size: 0.75em;
+    vertical-align: super;
+    line-height: 0;
+}
+
+.footnote-ref a {
+    color: var(--accent-primary, #6366f1);
+    text-decoration: none;
+    font-weight: 600;
+    padding: 0 2px;
+    transition: color 0.15s ease;
+}
+
+.footnote-ref a:hover {
+    color: #818cf8;
+    text-decoration: underline;
+}
+
+.footnote-back {
+    font-size: 0.85em;
+    color: var(--accent-primary, #6366f1);
+    text-decoration: none;
+    margin-left: 4px;
+}
+
+.footnote-back:hover {
+    text-decoration: underline;
+}
+
+/* ── 9. Reading Progress Bar ────────────────────────────────── */
+
+.reading-progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #818cf8 0%, #a78bfa 50%, #c084fc 100%);
+    z-index: 9999;
+    transition: width 0.1s ease-out;
+    box-shadow: 0 0 8px rgba(129, 140, 248, 0.4);
+}
+
+/* ── 10. Reading Time Badge ─────────────────────────────────── */
+
+.reading-time-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted, #71717a);
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.3));
+    border-radius: 20px;
+    margin-left: 8px;
+    white-space: nowrap;
+}
+
+/* ── 11. Last Updated Badge ─────────────────────────────────── */
+
+.last-updated {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted, #71717a);
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.15);
+    border-radius: 20px;
+}
+
+/* ── 12. Nested Lists ───────────────────────────────────────── */
+
+ul ul, ol ul {
+    list-style-type: circle;
+    margin: 4px 0 4px 8px;
+}
+
+ul ul ul, ol ul ul, ul ol ul, ol ol ul {
+    list-style-type: square;
+}
+
+ol ol, ul ol {
+    list-style-type: lower-alpha;
+    margin: 4px 0 4px 8px;
+}
+
+ol ol ol, ul ol ol {
+    list-style-type: lower-roman;
+}
+
+ul ul li, ol ul li, ul ol li, ol ol li {
+    color: var(--text-secondary, #a1a1aa);
+    font-size: 0.95em;
+}
+
+/* ── 13. Enhanced Author Box ────────────────────────────────── */
+
+.author-box {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 20px 24px;
+    margin: 2em 0;
+    background: var(--bg-secondary, #18181b);
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+    border-radius: var(--radius-md, 8px);
+}
+
+.author-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #818cf8, #a78bfa);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.author-info {
+    flex: 1;
+}
+
+.author-name {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--text-primary, #fafafa);
+    margin-bottom: 2px;
+}
+
+.author-credentials {
+    font-size: 0.8rem;
+    color: var(--accent-primary, #6366f1);
+    margin-bottom: 6px;
+}
+
+.author-bio {
+    font-size: 0.85rem;
+    color: var(--text-muted, #71717a);
+    line-height: 1.5;
+}
+
+.author-social {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.author-social a {
+    font-size: 0.8rem;
+    color: var(--text-muted, #71717a);
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+.author-social a:hover {
+    color: var(--accent-primary, #6366f1);
+}
+
+/* ── 14. Article Content Wrapper ────────────────────────────── */
+
+article.content-article {
+    max-width: 750px;
+    margin: 0 auto;
+    line-height: 1.8;
+}
+
+article.content-article a {
+    color: var(--accent-primary, #6366f1);
+    text-decoration: underline;
+    text-decoration-color: rgba(99, 102, 241, 0.3);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 0.15s ease;
+}
+
+article.content-article a:hover {
+    text-decoration-color: var(--accent-primary, #6366f1);
+}
+
+/* ── 15. Semantic Elements ──────────────────────────────────── */
+
+figure {
+    margin: 1.6em 0;
+    text-align: center;
+}
+
+figure img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.3));
+}
+
+figcaption {
+    font-size: 0.8rem;
+    color: var(--text-muted, #71717a);
+    margin-top: 8px;
+    text-align: center;
+    font-style: italic;
+}
+
+aside:not(.key-takeaways) {
+    padding: 16px 20px;
+    margin: 1.4em 0;
+    border-left: 3px solid var(--accent-primary, #6366f1);
+    background: rgba(99, 102, 241, 0.04);
+    border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
+    font-size: 0.92rem;
+    color: var(--text-secondary, #a1a1aa);
+}
+
+abbr[title] {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--text-muted, #71717a);
+    text-underline-offset: 3px;
+    cursor: help;
+}
+
+/* ── 16. TOC Sticky Sidebar ─────────────────────────────────── */
+
+.toc-sticky {
+    position: sticky;
+    top: 24px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+}
+
+.toc-sticky::-webkit-scrollbar {
+    width: 3px;
+}
+
+.toc-sticky::-webkit-scrollbar-thumb {
+    background: var(--border-subtle, rgba(63, 63, 70, 0.5));
+    border-radius: 2px;
+}
+
+.table-of-contents a.toc-active {
+    color: var(--accent-primary, #6366f1);
+    font-weight: 600;
+}
+
+/* ── 17. Comparison Table Enhancement ───────────────────────── */
+
+.comparison-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 1.4em 0;
+    border-radius: var(--radius-md, 8px);
+    border: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.5));
+}
+
+.comparison-table-wrapper table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.comparison-table-wrapper caption {
+    padding: 12px 16px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text-primary, #fafafa);
+    text-align: left;
+    caption-side: top;
+    border-bottom: 1px solid var(--border-subtle, rgba(63, 63, 70, 0.3));
+}
+
+/* ── Responsive adjustments ─────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .callout-tip,
+    .callout-warning,
+    .callout-info,
+    .callout-note {
+        padding: 12px 14px;
+        gap: 10px;
+    }
+
+    .callout-icon {
+        font-size: 1.1rem;
+    }
+
+    .pull-quote {
+        padding: 20px 16px;
+        margin: 1.4em 0;
+    }
+
+    .stat-highlight {
+        padding: 20px;
+        max-width: 100%;
+    }
+
+    .stat-number {
+        font-size: 2rem;
+    }
+
+    .code-block-wrapper pre {
+        padding: 32px 12px 12px;
+    }
+
+    .accordion-faq-item summary {
+        padding: 12px 16px;
+        font-size: 0.9rem;
+    }
+
+    .accordion-faq-answer {
+        padding: 0 16px 14px;
+    }
+
+    .author-box {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+
+    article.content-article {
+        line-height: 1.7;
+    }
+
+    .footnotes-section ol {
+        padding-left: 1.2em;
+    }
+}

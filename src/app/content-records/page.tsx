@@ -32,6 +32,7 @@ interface ContentRecord {
     score_details: Record<string, unknown>;
     meta_title: string;
     meta_description: string;
+    content_html: string;
     site_name: string;
     site_url: string;
     publish_status: string;
@@ -39,6 +40,32 @@ interface ContentRecord {
     wp_post_id: number | null;
     created_at: string;
     updated_at: string;
+}
+
+interface ModelCostBreakdown {
+    model: string;
+    provider: string;
+    calls: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+}
+
+interface TaskCostBreakdown {
+    task: string;
+    calls: number;
+    tokensIn: number;
+    tokensOut: number;
+    cost: number;
+}
+
+interface CostData {
+    totalCost: number;
+    totalTokensIn: number;
+    totalTokensOut: number;
+    totalCalls: number;
+    byModel: ModelCostBreakdown[];
+    byTask: TaskCostBreakdown[];
 }
 
 interface Site { id: string; name: string; }
@@ -61,6 +88,24 @@ export default function ContentRecordsPage() {
     // UI state
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [viewingContent, setViewingContent] = useState<ContentRecord | null>(null);
+
+    // Cost data cache: record id -> { data, loading, error }
+    const [costCache, setCostCache] = useState<Record<string, { data: CostData | null; loading: boolean; error: string | null }>>({});
+
+    // Edit modal state
+    const [editingRecord, setEditingRecord] = useState<ContentRecord | null>(null);
+    const [editForm, setEditForm] = useState({
+        title: '',
+        keyword: '',
+        meta_title: '',
+        meta_description: '',
+        content_html: '',
+        slug: '',
+        publish_status: '',
+        content_type: '',
+    });
+    const [saving, setSaving] = useState(false);
 
     const fetchRecords = useCallback(async (page = 1) => {
         setLoading(true);
@@ -118,6 +163,55 @@ export default function ContentRecordsPage() {
         }
     };
 
+    const openEdit = (record: ContentRecord) => {
+        setEditingRecord(record);
+        setEditForm({
+            title: record.title,
+            keyword: record.keyword,
+            meta_title: record.meta_title,
+            meta_description: record.meta_description,
+            content_html: record.content_html || '',
+            slug: record.slug,
+            publish_status: record.publish_status,
+            content_type: record.content_type,
+        });
+    };
+
+    const handleSave = async () => {
+        if (!editingRecord) return;
+        setSaving(true);
+        try {
+            const res = await fetch('/api/content-records', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: editingRecord.id, ...editForm }),
+            });
+            if (!res.ok) throw new Error('Failed to update');
+            toast.success('Record updated successfully');
+            setEditingRecord(null);
+            fetchRecords(pagination.page);
+        } catch {
+            toast.error('Failed to update record');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleStatusUpdate = async (id: string, newStatus: string) => {
+        try {
+            const res = await fetch('/api/content-records', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, publish_status: newStatus }),
+            });
+            if (!res.ok) throw new Error('Failed');
+            toast.success(`Status updated to ${newStatus}`);
+            fetchRecords(pagination.page);
+        } catch {
+            toast.error('Failed to update status');
+        }
+    };
+
     const handleSort = (col: string) => {
         if (sortBy === col) {
             setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -153,6 +247,33 @@ export default function ContentRecordsPage() {
         return `${(ms / 60000).toFixed(1)}m`;
     };
 
+    const formatCost = (cost: number) => {
+        if (cost === 0) return '$0.00';
+        if (cost < 0.01) return `$${cost.toFixed(4)}`;
+        return `$${cost.toFixed(2)}`;
+    };
+
+    const formatTokens = (tokens: number) => {
+        if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+        if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}K`;
+        return String(tokens);
+    };
+
+    const fetchCostData = useCallback(async (recordId: string) => {
+        // Already cached or loading
+        if (costCache[recordId]?.data || costCache[recordId]?.loading) return;
+
+        setCostCache(prev => ({ ...prev, [recordId]: { data: null, loading: true, error: null } }));
+        try {
+            const res = await fetch(`/api/content-records/${recordId}/cost`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            setCostCache(prev => ({ ...prev, [recordId]: { data, loading: false, error: null } }));
+        } catch (err) {
+            setCostCache(prev => ({ ...prev, [recordId]: { data: null, loading: false, error: err instanceof Error ? err.message : 'Failed to load cost' } }));
+        }
+    }, [costCache]);
+
     const getStatusBadge = (status: string): 'success' | 'warning' | 'info' | 'danger' | 'neutral' => {
         switch (status) {
             case 'published': return 'success';
@@ -186,9 +307,38 @@ export default function ContentRecordsPage() {
                     </div>
                     <div className="flex gap-2">
                         {selected.size > 0 && (
-                            <button className="btn btn-danger btn-sm" onClick={() => handleDelete(Array.from(selected))}>
-                                🗑️ Delete {selected.size}
-                            </button>
+                            <>
+                                <select className="form-select" style={{ padding: '6px 10px', fontSize: '0.8rem', width: 'auto' }}
+                                    onChange={async (e) => {
+                                        if (!e.target.value) return;
+                                        const newStatus = e.target.value;
+                                        try {
+                                            await Promise.all(Array.from(selected).map(id =>
+                                                fetch('/api/content-records', {
+                                                    method: 'PATCH',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ id, publish_status: newStatus }),
+                                                })
+                                            ));
+                                            toast.success(`Updated ${selected.size} record(s) to ${newStatus}`);
+                                            setSelected(new Set());
+                                            fetchRecords(pagination.page);
+                                        } catch {
+                                            toast.error('Failed to update status');
+                                        }
+                                        e.target.value = '';
+                                    }}
+                                >
+                                    <option value="">📋 Set Status...</option>
+                                    <option value="generated">Generated</option>
+                                    <option value="draft">Draft</option>
+                                    <option value="queued">Queued</option>
+                                    <option value="published">Published</option>
+                                </select>
+                                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(Array.from(selected))}>
+                                    🗑️ Delete {selected.size}
+                                </button>
+                            </>
                         )}
                         <button className="btn btn-secondary btn-sm" onClick={handleExportCSV} disabled={records.length === 0}>
                             📥 Export CSV
@@ -266,6 +416,7 @@ export default function ContentRecordsPage() {
                                         <th onClick={() => handleSort('overall_score')} style={{ cursor: 'pointer' }}>Score <SortIcon col="overall_score" /></th>
                                         <th onClick={() => handleSort('word_count_actual')} style={{ cursor: 'pointer' }}>Words <SortIcon col="word_count_actual" /></th>
                                         <th>AI Provider</th>
+                                        <th>💰 Cost</th>
                                         <th>Competitors</th>
                                         <th>Links</th>
                                         <th onClick={() => handleSort('generation_duration_ms')} style={{ cursor: 'pointer' }}>Duration <SortIcon col="generation_duration_ms" /></th>
@@ -278,7 +429,11 @@ export default function ContentRecordsPage() {
                                 <tbody>
                                     {records.map(record => (
                                         <React.Fragment key={record.id}>
-                                            <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === record.id ? null : record.id)}>
+                                            <tr style={{ cursor: 'pointer' }} onClick={() => {
+                                                const willExpand = expandedId !== record.id;
+                                                setExpandedId(willExpand ? record.id : null);
+                                                if (willExpand) fetchCostData(record.id);
+                                            }}>
                                                 <td onClick={e => e.stopPropagation()}>
                                                     <input type="checkbox" checked={selected.has(record.id)} onChange={() => toggleSelect(record.id)} />
                                                 </td>
@@ -298,6 +453,12 @@ export default function ContentRecordsPage() {
                                                 <td>
                                                     <Badge variant="info">{record.ai_provider || '—'}</Badge>
                                                 </td>
+                                                <td className="text-sm" style={{ whiteSpace: 'nowrap' }}>
+                                                    {costCache[record.id]?.data
+                                                        ? <span style={{ color: 'var(--accent-warning)', fontWeight: 600 }}>{formatCost(costCache[record.id].data!.totalCost)}</span>
+                                                        : <span className="text-muted">—</span>
+                                                    }
+                                                </td>
                                                 <td className="text-sm">{record.competitor_count}</td>
                                                 <td>
                                                     <div className="text-sm">🏠 {record.internal_link_count}</div>
@@ -308,15 +469,26 @@ export default function ContentRecordsPage() {
                                                 <td className="text-sm">{record.site_name || '—'}</td>
                                                 <td className="text-sm text-muted">{new Date(record.created_at).toLocaleDateString()}</td>
                                                 <td onClick={e => e.stopPropagation()}>
-                                                    <button className="btn btn-sm" style={{ padding: '2px 8px', color: 'var(--accent-danger)', fontSize: '0.75rem' }}
-                                                        onClick={() => handleDelete([record.id])}>🗑️</button>
+                                                    <div style={{ display: 'flex', gap: 4 }}>
+                                                        <button className="btn btn-sm" style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                                                            onClick={() => setViewingContent(record)} title="View Content">👁️</button>
+                                                        <button className="btn btn-sm" style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                                                            onClick={() => openEdit(record)} title="Edit">✏️</button>
+                                                        <button className="btn btn-sm" style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                                                            onClick={() => {
+                                                                const next = record.publish_status === 'generated' ? 'draft' : record.publish_status === 'draft' ? 'queued' : record.publish_status === 'queued' ? 'published' : 'generated';
+                                                                handleStatusUpdate(record.id, next);
+                                                            }} title="Cycle Status">🔄</button>
+                                                        <button className="btn btn-sm" style={{ padding: '2px 8px', color: 'var(--accent-danger)', fontSize: '0.75rem' }}
+                                                            onClick={() => handleDelete([record.id])} title="Delete">🗑️</button>
+                                                    </div>
                                                 </td>
                                             </tr>
 
                                             {/* Expanded Detail Row */}
                                             {expandedId === record.id && (
                                                 <tr>
-                                                    <td colSpan={12} style={{ padding: 0, background: 'var(--bg-glass)' }}>
+                                                    <td colSpan={13} style={{ padding: 0, background: 'var(--bg-glass)' }}>
                                                         <div style={{ padding: '20px 24px' }}>
                                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
                                                                 {/* Score Breakdown */}
@@ -399,6 +571,117 @@ export default function ContentRecordsPage() {
                                                                 </div>
                                                             </div>
 
+                                                            {/* 💰 AI Cost Breakdown */}
+                                                            <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-md)', padding: 16, marginBottom: 16 }}>
+                                                                <div className="text-sm" style={{ fontWeight: 600, marginBottom: 10 }}>💰 AI Cost Breakdown</div>
+                                                                {costCache[record.id]?.loading ? (
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                                                                        <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
+                                                                        <span className="text-sm text-muted">Loading cost data...</span>
+                                                                    </div>
+                                                                ) : costCache[record.id]?.error ? (
+                                                                    <div className="text-sm" style={{ color: 'var(--accent-danger)', padding: '8px 0' }}>
+                                                                        ⚠️ {costCache[record.id].error}
+                                                                    </div>
+                                                                ) : costCache[record.id]?.data ? (
+                                                                    (() => {
+                                                                        const cost = costCache[record.id].data!;
+                                                                        return (
+                                                                            <>
+                                                                                {/* Summary bar */}
+                                                                                <div style={{
+                                                                                    display: 'flex', gap: 16, flexWrap: 'wrap',
+                                                                                    padding: '10px 14px', marginBottom: 14,
+                                                                                    background: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)',
+                                                                                    fontSize: '0.8rem',
+                                                                                }}>
+                                                                                    <span>Total Cost: <strong style={{ color: 'var(--accent-warning)' }}>{formatCost(cost.totalCost)}</strong></span>
+                                                                                    <span style={{ opacity: 0.4 }}>|</span>
+                                                                                    <span>Total Calls: <strong>{cost.totalCalls}</strong></span>
+                                                                                    <span style={{ opacity: 0.4 }}>|</span>
+                                                                                    <span>Tokens: <strong>{formatTokens(cost.totalTokensIn)}</strong> in / <strong>{formatTokens(cost.totalTokensOut)}</strong> out</span>
+                                                                                </div>
+
+                                                                                {/* By Model & By Task side by side */}
+                                                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                                                                    {/* By Model */}
+                                                                                    <div>
+                                                                                        <div className="text-sm text-muted" style={{ fontSize: '0.7rem', marginBottom: 6, fontWeight: 600 }}>By Model</div>
+                                                                                        {cost.byModel.length > 0 ? (
+                                                                                            <div style={{
+                                                                                                background: 'rgba(0,0,0,0.15)', borderRadius: 'var(--radius-sm)',
+                                                                                                overflow: 'hidden', fontSize: '0.75rem',
+                                                                                            }}>
+                                                                                                <div style={{
+                                                                                                    display: 'grid', gridTemplateColumns: '1fr auto auto',
+                                                                                                    padding: '6px 10px', fontWeight: 600,
+                                                                                                    borderBottom: '1px solid var(--border-subtle)',
+                                                                                                    color: 'var(--text-secondary)',
+                                                                                                }}>
+                                                                                                    <span>Model</span>
+                                                                                                    <span style={{ textAlign: 'right' }}>Calls</span>
+                                                                                                    <span style={{ textAlign: 'right', minWidth: 60 }}>Cost</span>
+                                                                                                </div>
+                                                                                                {cost.byModel.map((m, i) => (
+                                                                                                    <div key={i} style={{
+                                                                                                        display: 'grid', gridTemplateColumns: '1fr auto auto',
+                                                                                                        padding: '5px 10px',
+                                                                                                        borderBottom: i < cost.byModel.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                                                                                                    }}>
+                                                                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.model}</span>
+                                                                                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{m.calls}</span>
+                                                                                                        <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent-warning)', minWidth: 60 }}>{formatCost(m.cost)}</span>
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <span className="text-sm text-muted">No model data</span>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {/* By Task */}
+                                                                                    <div>
+                                                                                        <div className="text-sm text-muted" style={{ fontSize: '0.7rem', marginBottom: 6, fontWeight: 600 }}>By Task</div>
+                                                                                        {cost.byTask.length > 0 ? (
+                                                                                            <div style={{
+                                                                                                background: 'rgba(0,0,0,0.15)', borderRadius: 'var(--radius-sm)',
+                                                                                                overflow: 'hidden', fontSize: '0.75rem',
+                                                                                            }}>
+                                                                                                <div style={{
+                                                                                                    display: 'grid', gridTemplateColumns: '1fr auto auto',
+                                                                                                    padding: '6px 10px', fontWeight: 600,
+                                                                                                    borderBottom: '1px solid var(--border-subtle)',
+                                                                                                    color: 'var(--text-secondary)',
+                                                                                                }}>
+                                                                                                    <span>Task</span>
+                                                                                                    <span style={{ textAlign: 'right' }}>Calls</span>
+                                                                                                    <span style={{ textAlign: 'right', minWidth: 60 }}>Cost</span>
+                                                                                                </div>
+                                                                                                {cost.byTask.map((t, i) => (
+                                                                                                    <div key={i} style={{
+                                                                                                        display: 'grid', gridTemplateColumns: '1fr auto auto',
+                                                                                                        padding: '5px 10px',
+                                                                                                        borderBottom: i < cost.byTask.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                                                                                                    }}>
+                                                                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.task.replace(/_/g, ' ')}</span>
+                                                                                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{t.calls}</span>
+                                                                                                        <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--accent-warning)', minWidth: 60 }}>{formatCost(t.cost)}</span>
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <span className="text-sm text-muted">No task data</span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </>
+                                                                        );
+                                                                    })()
+                                                                ) : (
+                                                                    <span className="text-sm text-muted">No cost data available</span>
+                                                                )}
+                                                            </div>
+
                                                             {/* Outline & Blueprint */}
                                                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                                                                 {record.outline_data && Object.keys(record.outline_data).length > 0 && (
@@ -466,6 +749,169 @@ export default function ContentRecordsPage() {
                     </div>
                 )}
             </main>
+
+            {/* Edit Modal */}
+            {editingRecord && (
+                <div
+                    style={{
+                        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    onClick={() => setEditingRecord(null)}
+                >
+                    <div
+                        style={{
+                            background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)',
+                            padding: 32, maxWidth: 600, width: '90%', maxHeight: '80vh',
+                            overflowY: 'auto', border: '1px solid var(--border-subtle)',
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 20 }}>✏️ Edit Record</h2>
+
+                        <div className="form-group">
+                            <label className="form-label">Title</label>
+                            <input className="form-input" value={editForm.title}
+                                onChange={e => setEditForm(prev => ({ ...prev, title: e.target.value }))} />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Keyword</label>
+                            <input className="form-input" value={editForm.keyword}
+                                onChange={e => setEditForm(prev => ({ ...prev, keyword: e.target.value }))} />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Slug</label>
+                            <input className="form-input" value={editForm.slug}
+                                onChange={e => setEditForm(prev => ({ ...prev, slug: e.target.value }))} />
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div className="form-group">
+                                <label className="form-label">Content Type</label>
+                                <select className="form-select" value={editForm.content_type}
+                                    onChange={e => setEditForm(prev => ({ ...prev, content_type: e.target.value }))}>
+                                    <option value="article">Article</option>
+                                    <option value="cluster">Cluster</option>
+                                    <option value="optimized">Optimized</option>
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Status</label>
+                                <select className="form-select" value={editForm.publish_status}
+                                    onChange={e => setEditForm(prev => ({ ...prev, publish_status: e.target.value }))}>
+                                    <option value="generated">Generated</option>
+                                    <option value="draft">Draft</option>
+                                    <option value="queued">Queued</option>
+                                    <option value="published">Published</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Meta Title</label>
+                            <input className="form-input" value={editForm.meta_title}
+                                onChange={e => setEditForm(prev => ({ ...prev, meta_title: e.target.value }))} />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Meta Description</label>
+                            <textarea className="form-input" rows={3} value={editForm.meta_description}
+                                onChange={e => setEditForm(prev => ({ ...prev, meta_description: e.target.value }))} />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">📝 Content HTML</label>
+                            <textarea
+                                className="form-input"
+                                value={editForm.content_html || ''}
+                                onChange={e => setEditForm(prev => ({ ...prev, content_html: e.target.value }))}
+                                rows={12}
+                                style={{ fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: 1.5 }}
+                                placeholder="Full HTML content..."
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+                            <button className="btn btn-secondary" onClick={() => setEditingRecord(null)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                                {saving ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Content Viewer Overlay */}
+            {viewingContent && (
+                <div style={{
+                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+                    zIndex: 1100, display: 'flex', flexDirection: 'column',
+                    animation: 'fadeIn 0.2s ease',
+                }}>
+                    {/* Header Bar */}
+                    <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '16px 24px', background: 'var(--bg-card)',
+                        borderBottom: '1px solid var(--border-subtle)',
+                        flexShrink: 0,
+                    }}>
+                        <div>
+                            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+                                {viewingContent.title || viewingContent.keyword}
+                            </h2>
+                            <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                                {viewingContent.keyword} • {viewingContent.word_count_actual.toLocaleString()} words • Score: {Math.round(viewingContent.overall_score)}
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button className="btn btn-secondary btn-sm" onClick={() => {
+                                if (viewingContent.content_html) {
+                                    navigator.clipboard.writeText(viewingContent.content_html);
+                                    toast.success('HTML copied to clipboard');
+                                }
+                            }}>📋 Copy HTML</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => {
+                                const blob = new Blob([viewingContent.content_html || ''], { type: 'text/html' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `${viewingContent.slug || viewingContent.keyword}.html`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                            }}>💾 Download</button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => setViewingContent(null)}>✕ Close</button>
+                        </div>
+                    </div>
+                    {/* Content Area */}
+                    <div style={{
+                        flex: 1, overflow: 'auto', padding: '32px 48px',
+                        background: 'var(--bg-main)',
+                    }}>
+                        {viewingContent.content_html ? (
+                            <div style={{
+                                maxWidth: 800, margin: '0 auto',
+                                background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)',
+                                padding: '40px 48px', border: '1px solid var(--border-subtle)',
+                                lineHeight: 1.8, fontSize: '1rem',
+                            }}>
+                                <div dangerouslySetInnerHTML={{ __html: viewingContent.content_html }} />
+                            </div>
+                        ) : (
+                            <div style={{
+                                maxWidth: 600, margin: '80px auto', textAlign: 'center',
+                                padding: 40, background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)',
+                                border: '1px solid var(--border-subtle)',
+                            }}>
+                                <div style={{ fontSize: '3rem', marginBottom: 16 }}>📄</div>
+                                <h3 style={{ margin: '0 0 8px', fontWeight: 600 }}>No Content Available</h3>
+                                <p className="text-sm text-muted">This record was created before content storage was enabled. New content will be stored automatically.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

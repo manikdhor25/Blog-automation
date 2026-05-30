@@ -5,16 +5,43 @@
 
 import { GeneratedContent } from './content-utils';
 import { VideoMeta } from './media-engine';
+import type { EntitySchemaItem } from './entity-optimizer';
+
+// ── Extended Schema Options ────────────────────────────────────
+export interface SchemaOptions {
+    /** ISO date string for when content was last modified (#31) */
+    lastModified?: string;
+    /** Site URL for canonical/breadcrumb links */
+    siteUrl?: string;
+    /** Article slug for breadcrumb generation (#66) */
+    slug?: string;
+    /** Site/publisher name */
+    siteName?: string;
+    /** Category for breadcrumb (#66) */
+    category?: string;
+    /** Author name override */
+    authorName?: string;
+    /** Author URL for sameAs */
+    authorUrl?: string;
+    /** Entity mentions for SameAs schema (#47) */
+    entityMentions?: EntitySchemaItem[];
+}
 
 // Generate comprehensive schema markup (7+ types including Product/Review + VideoObject)
 export function generateSchemaMarkup(
     content: GeneratedContent,
     keyword: string,
-    videoMetas?: VideoMeta[]
+    videoMetas?: VideoMeta[],
+    options?: SchemaOptions
 ): Record<string, unknown> {
     const schemas: Record<string, unknown>[] = [];
     const now = new Date().toISOString();
+    // #31: Use provided lastModified date or fall back to current time
+    const dateModified = options?.lastModified || now;
     const htmlContent = content.content || '';
+    const siteUrl = options?.siteUrl || '';
+    const siteName = options?.siteName || 'RankMaster Pro';
+    const authorName = options?.authorName || 'Editorial Team';
 
     // Extract hero image URL from resolved content (if available)
     const heroImageMatch = htmlContent.match(/<figure class="article-image article-hero-image">\s*<img src="([^"]+)"/);
@@ -28,24 +55,39 @@ export function generateSchemaMarkup(
         description: content.metaDescription,
         keywords: keyword,
         datePublished: now,
-        dateModified: now,
+        dateModified: dateModified,  // #31: actual edit time
         mainEntityOfPage: {
             '@type': 'WebPage',
-            '@id': '#article',
+            '@id': options?.slug ? `${siteUrl}/${options.slug}` : '#article',
         },
         author: {
             '@type': 'Person',
-            name: 'Editorial Team',
+            name: authorName,
+            ...(options?.authorUrl ? { url: options.authorUrl } : {}),
         },
         publisher: {
             '@type': 'Organization',
-            name: 'RankMaster Pro',
+            name: siteName,
         },
         image: heroImageUrl
-            ? { '@type': 'ImageObject', url: heroImageUrl }
+            ? {
+                '@type': 'ImageObject',
+                url: heroImageUrl,
+                // #62: Enhanced image schema
+                caption: `${keyword} - featured image`,
+              }
             : undefined,
         wordCount: htmlContent.replace(/<[^>]+>/g, '').split(/\s+/).length,
         articleSection: keyword,
+        // #47: Entity mentions with SameAs links
+        ...(options?.entityMentions && options.entityMentions.length > 0 ? {
+            mentions: options.entityMentions.map(e => ({
+                '@type': e['@type'],
+                name: e.name,
+                ...(e.sameAs ? { sameAs: e.sameAs } : {}),
+                ...(e.description ? { description: e.description } : {}),
+            })),
+        } : {}),
     });
 
     // 2. FAQPage schema
@@ -117,22 +159,44 @@ export function generateSchemaMarkup(
         }
     }
 
-    // 5. BreadcrumbList schema
+    // 5. BreadcrumbList schema (#66 — dynamic from slug/category)
+    const breadcrumbItems: { '@type': string; position: number; name: string; item?: string }[] = [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: siteUrl || '/' },
+    ];
+    if (options?.category) {
+        breadcrumbItems.push({
+            '@type': 'ListItem',
+            position: 2,
+            name: options.category,
+            item: `${siteUrl}/${options.category.toLowerCase().replace(/\s+/g, '-')}`,
+        });
+        breadcrumbItems.push({
+            '@type': 'ListItem',
+            position: 3,
+            name: content.title,
+        });
+    } else {
+        breadcrumbItems.push(
+            { '@type': 'ListItem', position: 2, name: 'Blog', item: `${siteUrl}/blog` },
+            { '@type': 'ListItem', position: 3, name: content.title },
+        );
+    }
     schemas.push({
         '@context': 'https://schema.org',
         '@type': 'BreadcrumbList',
-        itemListElement: [
-            { '@type': 'ListItem', position: 1, name: 'Home', item: '/' },
-            { '@type': 'ListItem', position: 2, name: 'Blog', item: '/blog' },
-            { '@type': 'ListItem', position: 3, name: content.title },
-        ],
+        itemListElement: breadcrumbItems,
     });
 
-    // 6. SpeakableSpecification — for voice/AI assistant extraction
-    const firstParagraph = htmlContent.match(/<p[^>]*>(.*?)<\/p>/i);
+    // 6. SpeakableSpecification — for voice/AI assistant extraction (#19 enhanced)
+    const firstParagraph = htmlContent.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
     const speakableTexts: string[] = [];
     if (firstParagraph) {
         speakableTexts.push(firstParagraph[1].replace(/<[^>]+>/g, '').trim());
+    }
+    // Also grab key-takeaways text if present
+    const keyTakeaways = htmlContent.match(/<div class="key-takeaways">([\s\S]*?)<\/div>/i);
+    if (keyTakeaways) {
+        speakableTexts.push(keyTakeaways[1].replace(/<[^>]+>/g, '').trim().substring(0, 500));
     }
     if (content.faqSection && content.faqSection.length > 0) {
         speakableTexts.push(
@@ -145,7 +209,14 @@ export function generateSchemaMarkup(
             '@type': 'WebPage',
             speakable: {
                 '@type': 'SpeakableSpecification',
-                cssSelector: ['.article-intro', '.faq-answer'],
+                // #19: Updated selectors to match actual generated HTML structure
+                cssSelector: [
+                    '.article-intro',
+                    '.key-takeaways',
+                    '.faq-answer',
+                    'h2 + p',           // First paragraph after each H2 (direct answer)
+                    '.table-of-contents',
+                ],
             },
         });
     }
@@ -189,6 +260,49 @@ export function generateSchemaMarkup(
                     name: video.channelName,
                     url: video.channelUrl,
                 },
+            });
+        }
+    }
+
+    // 9. DefinedTerm schema — auto-detect definition content (#17)
+    const isDefinitionArticle = /\b(what is|what are|definition of|meaning of)\b/i.test(keyword);
+    const definitionMatch = htmlContent.match(/<p[^>]*>([^<]*?\bis\b[^<]*?(?:a|an|the)\s[^<]{20,200})\.?<\/p>/i);
+    if (isDefinitionArticle && definitionMatch) {
+        schemas.push({
+            '@context': 'https://schema.org',
+            '@type': 'DefinedTerm',
+            name: keyword.replace(/\b(what is|what are|definition of|meaning of)\b/i, '').trim(),
+            description: definitionMatch[1].replace(/<[^>]+>/g, '').trim(),
+            inDefinedTermSet: {
+                '@type': 'DefinedTermSet',
+                name: options?.category || 'General Knowledge',
+            },
+        });
+    }
+
+    // 10. ClaimReview schema — for fact-check / myth-busting content (#18)
+    const isFactCheck = /\b(myth|fact.check|debunk|is it true|truth about)\b/i.test(keyword)
+        || /\b(myth|fact|debunk|truth)\b/i.test(content.title);
+    if (isFactCheck) {
+        // Extract the first claim-like pattern from content
+        const claimMatch = htmlContent.match(/<h[23][^>]*>([^<]*(?:myth|claim|fact)[^<]*)<\/h[23]>/i);
+        if (claimMatch) {
+            schemas.push({
+                '@context': 'https://schema.org',
+                '@type': 'ClaimReview',
+                claimReviewed: claimMatch[1].replace(/<[^>]+>/g, '').trim(),
+                reviewRating: {
+                    '@type': 'Rating',
+                    ratingValue: 'mixed',
+                    bestRating: 'true',
+                    worstRating: 'false',
+                    alternateName: 'Partly true',
+                },
+                author: {
+                    '@type': 'Organization',
+                    name: siteName,
+                },
+                datePublished: now,
             });
         }
     }

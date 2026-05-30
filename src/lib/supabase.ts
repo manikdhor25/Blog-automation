@@ -43,9 +43,8 @@ export const supabase = new Proxy({} as ReturnType<typeof createClient>, {
 export function createServiceRoleClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  if (!isValidUrl(url)) {
-    console.warn('[Supabase] NEXT_PUBLIC_SUPABASE_URL is not configured — service role client will return empty data. Set it in .env.local');
-    return createClient('https://placeholder.supabase.co', 'placeholder');
+  if (!isValidUrl(url) || !key) {
+    throw new Error('[Supabase] NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set to use service role client');
   }
   return createClient(url, key);
 }

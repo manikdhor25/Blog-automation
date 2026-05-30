@@ -109,11 +109,35 @@ export const BANNED_PHRASES = [
 // ── Human-Style System Prompt Fragment ────────────────────────
 // Prepend or merge this into every AI system prompt.
 
-export const HUMAN_STYLE_SYSTEM_PROMPT = `You are a real human writer. Your writing sounds natural, simple, and clear.
-You write like a person talking to a friend — not like a textbook or a sales pitch.
-You use easy words, short sentences, and contractions (you're, it's, don't, can't).
-A 12-year-old should understand every sentence you write.
-You NEVER sound robotic, motivational, or corporate.`;
+export const HUMAN_STYLE_SYSTEM_PROMPT = `You are a domain expert who writes for a smart, busy reader.
+You know the topic deeply, and you explain it in plain language on purpose — clarity is a skill, not a lack of depth.
+You write like a knowledgeable person explaining something to a sharp friend, not like a textbook or a sales pitch.
+You use easy words, short sentences, and natural contractions (you're, it's, don't, can't).
+Aim for a Flesch Reading Ease of 55-70 for standard content and 65-75 for beginner guides — clear, never dumbed-down.
+Your authority comes from specifics and real sources, NOT from a formal or corporate tone.
+You NEVER sound robotic, motivational, or corporate.
+You NEVER invent statistics, studies, quotes, institutions, or credentials, and you NEVER claim first-hand testing unless real test data is provided.`;
+
+// ── Exported Individual Rule Blocks ──────────────────────────
+// Available for use in section-level prompts that need targeted rules
+
+export const VOICE_SEARCH_CADENCE_RULES = `
+VOICE-SEARCH CADENCE:
+- Start FAQ answers with a direct statement, not hedging
+- Keep key definitions under 40 words (speakable in ~15 seconds)
+- No parenthetical asides in opening paragraphs
+- Use subject-verb-object order for key claims
+- Write numbers as digits for voice clarity
+`;
+
+export const POSITIVE_WRITING_PATTERNS = `
+INFORMATION-FIRST PATTERNS:
+- Lead with the fact, not the setup
+- Start paragraphs with data or claims, not transitions
+- Use "While most guides suggest X, the data shows Y" contrast patterns
+- Every paragraph must pass the "so what?" test
+- Prefer active voice: "Google ranks passages" not "Passages are ranked"
+`;
 
 // ── Human-Style Content Rules Prompt Fragment ─────────────────
 // Append this block to every content-generation prompt.
@@ -130,6 +154,11 @@ HUMAN WRITING RULES (MANDATORY — content WILL BE REJECTED if these are broken)
 7. TRANSITIONS: Use natural transitions ("So", "Here's the thing", "That said", "But", "And"). Do NOT use formal connectors (Moreover, Furthermore, Additionally, Consequently).
 8. EXAMPLES: Add small, relatable examples when they help explain a point.
 9. NO FILLER: Remove any line that doesn't add real value. No empty statements. No over-explaining simple ideas.
+10. READABILITY TARGET: Aim for a Flesch Reading Ease score of 55-70 for standard content, 65-75 for beginner guides (Flesch-Kincaid grade 9 or below; grade 8 or below for beginner guides). This means:
+    - Average sentence length: 12-18 words (never exceed 25)
+    - Average word length: 1.3-1.5 syllables
+    - Use 1-2 syllable words for 80% of content
+    - If you must use a technical term, follow it immediately with a plain-English explanation
 
 STRICTLY BANNED PHRASES — NEVER use these under any circumstances:
 - "In today's world" / "In today's digital landscape"
@@ -202,13 +231,39 @@ const PHRASE_REPLACEMENTS: [RegExp, string][] = [
  * and fixes common AI writing patterns in the HTML output.
  * NOTE: Heading tags (H1-H6) are preserved during phrase replacement
  * to avoid stripping keyword-rich heading text.
+ * 
+ * @param niche - Optional niche identifier. When provided, context-appropriate
+ *   technical terms are preserved (e.g., "robust" in software/engineering niches).
  */
-export function cleanAIPatterns(html: string): string {
+export function cleanAIPatterns(html: string, niche?: string): string {
     let cleaned = html;
+
+    // 0. Strip markdown code fences the AI sometimes wraps around HTML output
+    //    Handles: ```html ... ```, ```HTML ... ```, ``` ... ```
+    cleaned = cleaned.replace(/```(?:html|HTML)?\s*\n?/g, '');
+    cleaned = cleaned.replace(/\n?```\s*$/gm, '');
+
+    // MI-1: Context-aware exceptions — skip replacements for domain-appropriate words
+    const technicalNiches = ['software', 'programming', 'engineering', 'devops', 'cloud', 'security', 'api', 'database', 'infrastructure'];
+    const isTechnical = niche && technicalNiches.some(n => niche.toLowerCase().includes(n));
+
+    // Patterns to skip in technical content (these are legitimate technical terms).
+    // Stored as a Set of regex `.source` strings so they match the actual
+    // PHRASE_REPLACEMENTS pattern sources exactly (previous array used
+    // double-escaped literals that never matched, so the exception was dead).
+    const technicalExceptions = isTechnical
+        ? new Set([
+            '\\brobust\\b',        // "robust error handling" is correct in tech
+            '\\bseamlessly?\\b',   // "seamlessly integrates" is common in tech
+            '\\bleverage\\b',      // "leverage existing APIs" is standard tech writing
+        ])
+        : new Set<string>();
 
     // 1. Replace banned phrases with neutral alternatives
     //    Skip text inside heading tags to preserve keyword-rich headings
     for (const [pattern, replacement] of PHRASE_REPLACEMENTS) {
+        // Skip if this pattern is a technical exception for this niche
+        if (technicalExceptions.has(pattern.source)) continue;
         cleaned = replaceOutsideHeadings(cleaned, pattern, replacement);
     }
 

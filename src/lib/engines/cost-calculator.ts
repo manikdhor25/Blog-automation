@@ -37,6 +37,18 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
     // Cohere
     'command-r-plus': { input: 2.50, output: 10.00 },
     'command-r': { input: 0.15, output: 0.60 },
+
+    // OpenRouter models (best-value routing)
+    'deepseek/deepseek-v4-pro': { input: 0.44, output: 0.87 },
+    'deepseek/deepseek-v4-flash': { input: 0.10, output: 0.20 },
+    'qwen/qwen3-235b-a22b': { input: 0.20, output: 0.60 },
+    'qwen/qwen3-32b': { input: 0.08, output: 0.15 },
+    'meta-llama/llama-4-maverick': { input: 0.15, output: 0.60 },
+    'meta-llama/llama-4-scout': { input: 0.08, output: 0.30 },
+    'google/gemini-2.5-flash': { input: 0.15, output: 0.60 },
+    'openai/gpt-4o': { input: 2.50, output: 10.00 },
+    'openai/gpt-4o-mini': { input: 0.15, output: 0.60 },
+    'anthropic/claude-3.5-sonnet': { input: 3.00, output: 15.00 },
 };
 
 // Fallback pricing by provider (if model not found in MODEL_PRICING)
@@ -48,6 +60,7 @@ const PROVIDER_FALLBACK_PRICING: Record<string, { input: number; output: number 
     mistral: { input: 0.25, output: 0.60 },
     deepseek: { input: 0.14, output: 0.28 },
     cohere: { input: 0.30, output: 0.60 },
+    openrouter: { input: 0.30, output: 0.60 },
 };
 
 // ── Types ─────────────────────────────────────────────────────

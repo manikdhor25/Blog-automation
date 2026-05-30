@@ -5,13 +5,14 @@
 /* --- Cards --- */
 .card {
   background: var(--gradient-card);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 24px;
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
+  contain: layout paint;
 }
 
 .card:hover {
@@ -48,13 +49,14 @@
 
 .stat-card {
   background: var(--gradient-card);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 20px 24px;
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
+  contain: layout paint;
 }
 
 .stat-card::before {

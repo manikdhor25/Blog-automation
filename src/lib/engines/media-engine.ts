@@ -630,6 +630,172 @@ If none are relevant, return { "selected": [] }.`;
     }
 }
 
+// ── #62: Image SEO Optimization ────────────────────────────────
+// Audits and fixes image tags for SEO compliance
+
+export interface ImageSEOIssue {
+    type: 'missing_alt' | 'generic_alt' | 'missing_dimensions' | 'missing_title' | 'oversized_filename';
+    element: string;
+    suggestion: string;
+}
+
+export function auditImageSEO(html: string, keyword: string): ImageSEOIssue[] {
+    const issues: ImageSEOIssue[] = [];
+    const imgRegex = /<img([^>]+)>/gi;
+    let match;
+
+    while ((match = imgRegex.exec(html)) !== null) {
+        const attrs = match[1];
+        const imgTag = match[0];
+
+        // Missing alt text
+        const altMatch = attrs.match(/alt="([^"]*)"/i);
+        if (!altMatch || altMatch[1].trim() === '') {
+            issues.push({
+                type: 'missing_alt',
+                element: imgTag.substring(0, 80),
+                suggestion: `Add descriptive alt text containing "${keyword}"`,
+            });
+        } else if (/^(image|photo|picture|img|screenshot|icon)\d*$/i.test(altMatch[1].trim())) {
+            issues.push({
+                type: 'generic_alt',
+                element: imgTag.substring(0, 80),
+                suggestion: `Replace generic alt "${altMatch[1]}" with descriptive text including "${keyword}"`,
+            });
+        }
+
+        // Missing width/height (causes CLS)
+        if (!attrs.match(/width=/i) || !attrs.match(/height=/i)) {
+            issues.push({
+                type: 'missing_dimensions',
+                element: imgTag.substring(0, 80),
+                suggestion: 'Add width and height attributes to prevent Cumulative Layout Shift (CLS)',
+            });
+        }
+
+        // Missing title attribute
+        if (!attrs.match(/title=/i)) {
+            issues.push({
+                type: 'missing_title',
+                element: imgTag.substring(0, 80),
+                suggestion: 'Add a title attribute for tooltip text and additional SEO context',
+            });
+        }
+    }
+
+    return issues;
+}
+
+/**
+ * Fix image tags by adding missing alt text, title, and loading attributes
+ */
+export function optimizeImageSEO(html: string, keyword: string): string {
+    let optimized = html;
+
+    // Add lazy loading to all images except the first one
+    let imgCount = 0;
+    optimized = optimized.replace(/<img([^>]+)>/gi, (match, attrs) => {
+        imgCount++;
+        let newAttrs = attrs;
+
+        // Add loading="lazy" to all except first image
+        if (imgCount > 1 && !/loading=/i.test(newAttrs)) {
+            newAttrs += ' loading="lazy"';
+        }
+
+        // Add decoding="async" for performance
+        if (!/decoding=/i.test(newAttrs)) {
+            newAttrs += ' decoding="async"';
+        }
+
+        // Fix empty alt text with keyword-based alt
+        const altMatch = newAttrs.match(/alt="([^"]*)"/i);
+        if (altMatch && altMatch[1].trim() === '') {
+            newAttrs = newAttrs.replace(/alt=""/i, `alt="${keyword} illustration"`);
+        }
+
+        return `<img${newAttrs}>`;
+    });
+
+    return optimized;
+}
+
+// ── #63: Infographic Placeholder Generator ─────────────────────
+// Creates HTML/CSS infographic placeholders for key data sections
+
+export function generateInfographicPlaceholder(
+    title: string,
+    dataPoints: { label: string; value: string; icon?: string }[],
+    keyword: string
+): string {
+    if (dataPoints.length < 3) return '';
+
+    const items = dataPoints.slice(0, 6).map((dp, i) => {
+        const colors = ['#4F46E5', '#7C3AED', '#2563EB', '#059669', '#D97706', '#DC2626'];
+        const color = colors[i % colors.length];
+        const icon = dp.icon || '📊';
+        return `
+      <div class="infographic-item" style="border-left: 4px solid ${color}; padding: 12px 16px; margin: 8px 0; background: ${color}10; border-radius: 0 8px 8px 0;">
+        <span style="font-size: 1.3em; margin-right: 8px;">${icon}</span>
+        <strong>${dp.value}</strong> — ${dp.label}
+      </div>`;
+    }).join('\n');
+
+    return `
+<figure class="infographic-placeholder" role="img" aria-label="${title}">
+  <div style="background: linear-gradient(135deg, #f8fafc, #e2e8f0); border-radius: 12px; padding: 24px; margin: 24px 0; border: 1px solid #cbd5e1;">
+    <h3 style="margin: 0 0 16px 0; font-size: 1.1em; color: #1e293b; text-align: center;">📈 ${title}</h3>
+    ${items}
+  </div>
+  <figcaption style="text-align: center; font-size: 0.85em; color: #64748b; margin-top: 8px;">Key data points for ${keyword}</figcaption>
+</figure>`;
+}
+
+/**
+ * Auto-detect sections that would benefit from infographic placeholders
+ * and inject them after data-heavy paragraphs
+ */
+export function autoInjectInfographicPlaceholders(html: string, keyword: string): string {
+    let enhanced = html;
+
+    // Find paragraphs with 3+ statistics
+    const paragraphRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+    let match;
+    const injections: { index: number; html: string }[] = [];
+
+    while ((match = paragraphRegex.exec(html)) !== null) {
+        const text = match[1].replace(/<[^>]+>/g, '');
+        const stats = text.match(/\d+(?:\.\d+)?[%x×$€£]/g) || [];
+        const numbers = text.match(/\b\d{2,}\b/g) || [];
+
+        if (stats.length + numbers.length >= 3) {
+            // Extract data points from the paragraph
+            const dataPoints = stats.slice(0, 4).map(stat => {
+                // Find context around the stat
+                const statIdx = text.indexOf(stat);
+                const context = text.substring(Math.max(0, statIdx - 30), Math.min(text.length, statIdx + stat.length + 30)).trim();
+                return { label: context, value: stat };
+            });
+
+            if (dataPoints.length >= 3) {
+                const infographic = generateInfographicPlaceholder(
+                    `${keyword} — Key Statistics`,
+                    dataPoints,
+                    keyword
+                );
+                injections.push({ index: match.index + match[0].length, html: infographic });
+            }
+        }
+    }
+
+    // Apply injections in reverse order (so indices remain valid)
+    for (const injection of injections.reverse().slice(0, 2)) { // Max 2 infographics per article
+        enhanced = enhanced.slice(0, injection.index) + '\n' + injection.html + '\n' + enhanced.slice(injection.index);
+    }
+
+    return enhanced;
+}
+
 
 // ── Singletons ─────────────────────────────────────────────────
 

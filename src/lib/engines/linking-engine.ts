@@ -236,6 +236,135 @@ Respond with JSON:
 
         return modifiedContent;
     }
+
+    // ── #59: PageRank-Aware Link Distribution ──────────────────
+    // Calculates a simple internal PageRank proxy and prioritizes linking
+    // to high-authority pages that could benefit from more internal links
+    calculateInternalPageRank(posts: { id: string; title: string; slug: string; keywords: string[] }[], existingLinks: { from: string; to: string; anchor: string }[]): Map<string, number> {
+        const pageRank = new Map<string, number>();
+        const N = posts.length;
+        const dampingFactor = 0.85;
+
+        // Initialize all pages with equal rank
+        for (const post of posts) {
+            pageRank.set(post.id, 1 / N);
+        }
+
+        // Build adjacency: who links TO each page
+        const incomingLinks = new Map<string, string[]>();
+        const outgoingCount = new Map<string, number>();
+
+        for (const link of existingLinks) {
+            // Find which post the link.to URL corresponds to
+            const targetPost = posts.find(p => link.to.includes(p.slug));
+            if (targetPost) {
+                const existing = incomingLinks.get(targetPost.id) || [];
+                existing.push(link.from);
+                incomingLinks.set(targetPost.id, existing);
+            }
+            outgoingCount.set(link.from, (outgoingCount.get(link.from) || 0) + 1);
+        }
+
+        // Iterate PageRank algorithm (5 iterations is sufficient for internal links)
+        for (let iter = 0; iter < 5; iter++) {
+            const newRanks = new Map<string, number>();
+            for (const post of posts) {
+                const incoming = incomingLinks.get(post.id) || [];
+                let sum = 0;
+                for (const fromId of incoming) {
+                    const fromRank = pageRank.get(fromId) || 0;
+                    const fromOutgoing = outgoingCount.get(fromId) || 1;
+                    sum += fromRank / fromOutgoing;
+                }
+                newRanks.set(post.id, (1 - dampingFactor) / N + dampingFactor * sum);
+            }
+            for (const [id, rank] of newRanks) {
+                pageRank.set(id, rank);
+            }
+        }
+
+        return pageRank;
+    }
+
+    // Sort link suggestions by target's PageRank (prefer linking to high-authority pages)
+    prioritizeLinksByPageRank(
+        suggestions: LinkSuggestion[],
+        posts: { id: string; title: string; slug: string; keywords: string[] }[],
+        existingLinks: { from: string; to: string; anchor: string }[]
+    ): LinkSuggestion[] {
+        const pageRanks = this.calculateInternalPageRank(posts, existingLinks);
+        
+        return suggestions.map(link => {
+            const targetPost = posts.find(p => link.targetUrl.includes(p.slug));
+            const rankBoost = targetPost ? (pageRanks.get(targetPost.id) || 0) * 100 : 0;
+            return {
+                ...link,
+                relevanceScore: link.relevanceScore + rankBoost,
+            };
+        }).sort((a, b) => b.relevanceScore - a.relevanceScore);
+    }
+
+    // ── #60: Bi-Directional Link Verification ──────────────────
+    // Identifies orphaned pages (no incoming links) and missing reciprocal links
+    verifyBidirectionalLinks(
+        posts: { id: string; title: string; slug: string; keywords: string[] }[],
+        existingLinks: { from: string; to: string; anchor: string }[]
+    ): {
+        orphanedPages: { id: string; title: string }[];
+        missingReciprocals: { from: string; to: string; fromTitle: string; toTitle: string }[];
+        linkHealth: number; // 0-100
+    } {
+        // Find pages with no incoming internal links
+        const pagesWithIncomingLinks = new Set<string>();
+        for (const link of existingLinks) {
+            const targetPost = posts.find(p => link.to.includes(p.slug));
+            if (targetPost) pagesWithIncomingLinks.add(targetPost.id);
+        }
+
+        const orphanedPages = posts
+            .filter(p => !pagesWithIncomingLinks.has(p.id))
+            .map(p => ({ id: p.id, title: p.title }));
+
+        // Find missing reciprocal links (A→B exists but B→A doesn't)
+        const missingReciprocals: { from: string; to: string; fromTitle: string; toTitle: string }[] = [];
+        const linkPairs = new Set<string>();
+
+        for (const link of existingLinks) {
+            const targetPost = posts.find(p => link.to.includes(p.slug));
+            if (targetPost) {
+                linkPairs.add(`${link.from}→${targetPost.id}`);
+            }
+        }
+
+        for (const link of existingLinks) {
+            const targetPost = posts.find(p => link.to.includes(p.slug));
+            if (!targetPost) continue;
+
+            const reciprocal = `${targetPost.id}→${link.from}`;
+            if (!linkPairs.has(reciprocal)) {
+                const fromPost = posts.find(p => p.id === link.from);
+                if (fromPost) {
+                    // Only add unique pairs
+                    const key = [link.from, targetPost.id].sort().join('-');
+                    if (!missingReciprocals.some(r => [r.from, r.to].sort().join('-') === key)) {
+                        missingReciprocals.push({
+                            from: targetPost.id,
+                            to: link.from,
+                            fromTitle: targetPost.title,
+                            toTitle: fromPost.title,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Calculate link health score
+        const orphanPenalty = posts.length > 0 ? (orphanedPages.length / posts.length) * 50 : 0;
+        const reciprocalPenalty = existingLinks.length > 0 ? Math.min(missingReciprocals.length * 2, 30) : 0;
+        const linkHealth = Math.max(0, Math.round(100 - orphanPenalty - reciprocalPenalty));
+
+        return { orphanedPages, missingReciprocals, linkHealth };
+    }
 }
 
 import { createSingleton } from '../singleton';

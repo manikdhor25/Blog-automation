@@ -615,39 +615,77 @@ function evaluateAEO(text: string, html: string, primaryKeyword: string): QCDime
         const wc = p.split(/\s+/).length;
         return wc >= 20 && wc <= 50;
     });
-    if (shortAnswerParas.length >= 2) score += 1.5;
-    else if (shortAnswerParas.length >= 1) score += 1;
+    if (shortAnswerParas.length >= 2) score += 1.2;
+    else if (shortAnswerParas.length >= 1) score += 0.8;
     else { issues.push('No concise answer paragraph (20-50 words) found'); suggestions.push('Add a direct, concise answer right after the main question heading'); }
 
     // 2. Definition paragraph in first 100 words
     const firstParaWords = paragraphs.length > 0 ? paragraphs[0].split(/\s+/).length : 0;
-    if (firstParaWords >= 30 && firstParaWords <= 80) score += 1.5;
+    if (firstParaWords >= 30 && firstParaWords <= 80) score += 1;
     else suggestions.push('Make the first paragraph a 30-60 word direct answer');
 
     // 3. List-based answers
     const hasOrderedList = /<ol[\s>]/i.test(html);
     const hasUnorderedList = /<ul[\s>]/i.test(html);
-    if (hasOrderedList) score += 1.5;
-    else if (hasUnorderedList) score += 1;
+    if (hasOrderedList && hasUnorderedList) score += 1.2;
+    else if (hasOrderedList) score += 1;
+    else if (hasUnorderedList) score += 0.8;
     else suggestions.push('Add numbered or bulleted lists for structured answers');
 
-    // 4. FAQ section
+    // 4. FAQ section with structured data
     const hasFAQ = lowerHTML.includes('faq') || lowerHTML.includes('frequently asked') || lowerHTML.includes('common questions');
-    if (hasFAQ) score += 2;
-    else { issues.push('No FAQ section found'); suggestions.push('Add a dedicated FAQ section with 4-6 common questions'); }
+    const hasFAQSchema = lowerHTML.includes('faqpage') || lowerHTML.includes('"@type":"question"');
+    if (hasFAQ && hasFAQSchema) score += 1.5;
+    else if (hasFAQ) score += 1;
+    else { issues.push('No FAQ section found'); suggestions.push('Add a dedicated FAQ section with 4-6 common questions + FAQPage schema'); }
 
     // 5. Question-based headings
     const questionHeadings = headings.filter(h => h.text.includes('?'));
-    if (questionHeadings.length >= 4) score += 1.5;
-    else if (questionHeadings.length >= 2) score += 1;
+    if (questionHeadings.length >= 4) score += 1;
+    else if (questionHeadings.length >= 2) score += 0.7;
     else suggestions.push('Use question-based headings ("What is…?", "How does…?")');
 
     // 6. Table for comparison / data
-    if (/<table[\s>]/i.test(html)) score += 1;
+    if (/<table[\s>]/i.test(html)) score += 0.6;
 
     // 7. Key takeaways / summary box
-    if (lowerHTML.includes('key takeaway') || lowerHTML.includes('summary') || lowerHTML.includes('tldr') || lowerHTML.includes('tl;dr')) score += 1;
+    if (lowerHTML.includes('key takeaway') || lowerHTML.includes('summary') || lowerHTML.includes('tldr') || lowerHTML.includes('tl;dr')) score += 0.5;
     else suggestions.push('Add a "Key Takeaways" or TL;DR summary section');
+
+    // ── #15: Enhanced AEO Checks ──────────────────────────────
+    // 8. Voice-search optimized paragraphs (conversational, 15-25 words)
+    const voiceParas = paragraphs.filter(p => {
+        const wc = p.split(/\s+/).length;
+        const hasConversational = /\b(you|your|you're|it's|that's|here's)\b/i.test(p);
+        return wc >= 15 && wc <= 25 && hasConversational;
+    });
+    if (voiceParas.length >= 3) score += 0.8;
+    else if (voiceParas.length >= 1) score += 0.4;
+    else suggestions.push('Add short (15-25 word) conversational paragraphs optimized for voice search');
+
+    // 9. SpeakableSpecification check
+    const hasSpeakable = lowerHTML.includes('speakablespecification') || lowerHTML.includes('speakable');
+    if (hasSpeakable) score += 0.6;
+
+    // 10. Passage-level answer blocks (standalone paragraphs that fully answer a question)
+    let passageAnswerCount = 0;
+    for (const h of headings) {
+        if (h.text.includes('?')) {
+            // Find the next paragraph after this heading
+            const headingIdx = html.toLowerCase().indexOf(h.text.toLowerCase());
+            const afterHeading = html.substring(headingIdx + h.text.length);
+            const nextPara = afterHeading.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+            if (nextPara) {
+                const paraText = nextPara[1].replace(/<[^>]+>/g, '');
+                const wc = paraText.split(/\s+/).length;
+                // Good answer block: 30-60 words, contains keyword or key terms
+                if (wc >= 25 && wc <= 65) passageAnswerCount++;
+            }
+        }
+    }
+    if (passageAnswerCount >= 3) score += 0.8;
+    else if (passageAnswerCount >= 1) score += 0.4;
+    else suggestions.push('Place 30-60 word direct answers immediately after question headings');
 
     return {
         score: Math.max(0, Math.min(10, Math.round(score * 10) / 10)),
@@ -656,12 +694,109 @@ function evaluateAEO(text: string, html: string, primaryKeyword: string): QCDime
         metrics: {
             shortAnswerParagraphs: shortAnswerParas.length,
             questionHeadings: questionHeadings.length,
+            voiceOptimizedParas: voiceParas.length,
+            passageAnswerBlocks: passageAnswerCount,
             hasFAQ: hasFAQ ? 'Yes' : 'No',
             hasOrderedList: hasOrderedList ? 'Yes' : 'No',
             hasTable: /<table[\s>]/i.test(html) ? 'Yes' : 'No',
         },
     };
 }
+
+// ── #16: GEO (Generative Engine Optimization) Dimension ───────
+function evaluateGEO(text: string, html: string, primaryKeyword: string): QCDimensionResult {
+    const issues: string[] = [];
+    const suggestions: string[] = [];
+    let score = 0;
+
+    const lowerText = text.toLowerCase();
+
+    // 1. Citation density — academic-style source attribution
+    const citationPatterns = [
+        /according to\s+[\w\s]+(?:\([\d]{4}\))?/gi,
+        /as (?:reported|noted|stated|found|shown) (?:by|in)\s+/gi,
+        /\[[\d]+\]/g,
+        /(?:research|study|survey|report|data)\s+(?:from|by|published)\s+/gi,
+        /\(\d{4}\)/g,
+    ];
+    let citationCount = 0;
+    for (const pattern of citationPatterns) {
+        const matches = text.match(pattern);
+        if (matches) citationCount += matches.length;
+    }
+    const wordsCount = text.split(/\s+/).length;
+    const citationsPerK = (citationCount / wordsCount) * 1000;
+
+    if (citationsPerK >= 5) score += 2;
+    else if (citationsPerK >= 3) score += 1.5;
+    else if (citationsPerK >= 1) score += 1;
+    else { issues.push('Very low citation density — AI overviews prefer well-sourced content'); suggestions.push('Add "according to [Source]" or "per [Study] (Year)" citations every 200-300 words'); }
+
+    // 2. Authoritative language (confidence calibration)
+    const authorityPatterns = /\b(research shows|data indicates|evidence suggests|studies confirm|analysis reveals|experts recommend|industry standard)\b/gi;
+    const authorityCount = (text.match(authorityPatterns) || []).length;
+    if (authorityCount >= 5) score += 1.5;
+    else if (authorityCount >= 2) score += 1;
+    else suggestions.push('Use authoritative language: "research shows", "data indicates", "studies confirm"');
+
+    // 3. Specific data points (numbers with context)
+    const dataPoints = text.match(/\d+(?:\.\d+)?(?:\s*(?:%|percent|million|billion|thousand|x|times|fold))/gi) || [];
+    if (dataPoints.length >= 8) score += 1.5;
+    else if (dataPoints.length >= 4) score += 1;
+    else if (dataPoints.length >= 2) score += 0.5;
+    else { issues.push('Too few quantified data points'); suggestions.push('Add specific statistics (percentages, dollar amounts, time comparisons)'); }
+
+    // 4. Balanced perspective (shows multiple viewpoints)
+    const balancePatterns = /\b(however|on the other hand|alternatively|conversely|in contrast|some argue|critics point out|while others|that said)\b/gi;
+    const balanceCount = (text.match(balancePatterns) || []).length;
+    if (balanceCount >= 4) score += 1;
+    else if (balanceCount >= 2) score += 0.5;
+    else suggestions.push('Add balanced perspective with counterpoints — GEO values nuanced answers');
+
+    // 5. Recency signals
+    const currentYear = new Date().getFullYear();
+    const yearPattern = new RegExp(`\\b(${currentYear}|${currentYear - 1})\\b`, 'g');
+    const recentYears = (text.match(yearPattern) || []).length;
+    if (recentYears >= 4) score += 1;
+    else if (recentYears >= 2) score += 0.5;
+    else suggestions.push(`Reference current (${currentYear}) data and trends for GEO freshness signals`);
+
+    // 6. Entity-rich content
+    const properNouns = text.match(/[A-Z][a-z]+ (?:[A-Z][a-z]+\s?)+/g) || [];
+    const uniqueEntities = new Set(properNouns.map(n => n.trim().toLowerCase()));
+    if (uniqueEntities.size >= 10) score += 1;
+    else if (uniqueEntities.size >= 5) score += 0.5;
+    else suggestions.push('Reference more named entities (organizations, people, products, places)');
+
+    // 7. Structured definitions (for knowledge panel extraction)
+    const hasDefinition = /\b(?:is|refers to|means|defined as|can be described as)\b/i.test(text.substring(0, 500));
+    if (hasDefinition) score += 0.5;
+
+    // 8. Schema markup (structured data for AI consumption)
+    const schemaTypes = ['Article', 'FAQPage', 'HowTo', 'BreadcrumbList', 'Organization'];
+    let schemaCount = 0;
+    for (const type of schemaTypes) {
+        if (html.includes(`"@type":"${type}"`) || html.includes(`"@type": "${type}"`)) schemaCount++;
+    }
+    if (schemaCount >= 3) score += 1;
+    else if (schemaCount >= 1) score += 0.5;
+
+    return {
+        score: Math.max(0, Math.min(10, Math.round(score * 10) / 10)),
+        issues,
+        suggestions,
+        metrics: {
+            citationDensityPerK: Math.round(citationsPerK * 10) / 10,
+            authorityPatterns: authorityCount,
+            dataPoints: dataPoints.length,
+            balancePatterns: balanceCount,
+            recentYearRefs: recentYears,
+            uniqueEntities: uniqueEntities.size,
+            schemaTypes: schemaCount,
+        },
+    };
+}
+
 
 // ── STEP 8: User Value & Information Gain ─────────────────────
 
@@ -881,6 +1016,7 @@ export function runQualityControl(input: QCInput): QualityControlReport {
     const semantic = evaluateSemanticSEO(plainText, input.content, input.primaryKeyword, input.secondaryKeywords);
     const eeat = evaluateEEAT(plainText, input.content);
     const aeo = evaluateAEO(plainText, input.content, input.primaryKeyword);
+    const geo = evaluateGEO(plainText, input.content, input.primaryKeyword);
     const value = evaluateUserValue(plainText, input.content, input.primaryKeyword);
 
     // Competitive requires other scores
@@ -889,21 +1025,22 @@ export function runQualityControl(input: QCInput): QualityControlReport {
         semantic.score, eeat.score, aeo.score, value.score, words.length
     );
 
-    // Overall weighted average
+    // Overall weighted average (10 dimensions)
     const overall = Math.round((
-        readability.score * 0.10 +
-        humanness.score * 0.14 +
-        seoStructure.score * 0.13 +
-        topicalDepth.score * 0.12 +
-        semantic.score * 0.10 +
-        eeat.score * 0.14 +
+        readability.score * 0.09 +
+        humanness.score * 0.12 +
+        seoStructure.score * 0.11 +
+        topicalDepth.score * 0.11 +
+        semantic.score * 0.09 +
+        eeat.score * 0.12 +
         aeo.score * 0.09 +
+        geo.score * 0.09 +
         value.score * 0.10 +
         competitive.score * 0.08
     ) * 10) / 10;
 
     const rankability = predictRankability(overall);
-    const allDims = [readability, humanness, seoStructure, topicalDepth, semantic, eeat, aeo, value, competitive];
+    const allDims = [readability, humanness, seoStructure, topicalDepth, semantic, eeat, aeo, geo, value, competitive];
     const allIssues = allDims.flatMap(d => d.issues);
     const publishDecision = decidePublish(overall, allIssues);
     const requiredImprovements = publishDecision !== 'Publish Immediately' ? collectImprovements(allDims) : [];
@@ -916,6 +1053,7 @@ export function runQualityControl(input: QCInput): QualityControlReport {
         Semantic: semantic.score,
         'E-E-A-T': eeat.score,
         AEO: aeo.score,
+        GEO: geo.score,
         'User Value': value.score,
         Competitive: competitive.score,
     };
@@ -933,6 +1071,7 @@ export function runQualityControl(input: QCInput): QualityControlReport {
         semanticScore: semantic,
         eeatScore: eeat,
         aeoScore: aeo,
+        geoScore: geo,
         valueScore: value,
         competitiveScore: competitive,
 
