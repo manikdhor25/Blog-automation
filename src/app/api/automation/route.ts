@@ -5,7 +5,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase';
+import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { getRankTrackingEngine } from '@/lib/engines/rank-engine';
 import { applyRankFeedback } from '@/lib/engines/rank-feedback';
 import { runQualityControl } from '@/lib/engines/quality-control-engine';
 import {
@@ -20,13 +22,10 @@ import {
 // Designed to be triggered by Vercel CRON, GitHub Actions, or external scheduler
 export async function GET(req: NextRequest) {
     const task = req.nextUrl.searchParams.get('task');
-    const secret = req.nextUrl.searchParams.get('secret');
 
-    // Basic auth for CRON endpoints (set CRON_SECRET in env)
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && secret !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // Fail-closed CRON auth (Authorization: Bearer <CRON_SECRET> or ?secret=).
+    const cronError = verifyCronAuth(req);
+    if (cronError) return cronError;
 
     const supabase = createServiceRoleClient();
 
@@ -265,16 +264,22 @@ async function handleAutoPublish(supabase: ReturnType<typeof createServiceRoleCl
 // Auto-Rank-Check: Daily rank tracking for active sites
 // ==========================================
 async function handleAutoRankCheck(supabase: ReturnType<typeof createServiceRoleClient>) {
-    // Get all active sites
+    // Get all active sites (user_id needed to attribute saved results)
     const { data: sites, error } = await supabase
         .from('sites')
-        .select('id, name, url')
+        .select('id, name, url, user_id')
         .order('created_at');
 
     if (error) throw error;
     if (!sites || sites.length === 0) {
         return NextResponse.json({ task: 'rank_check', message: 'No active sites' });
     }
+
+    // Call the rank engine directly. The HTTP /api/rank-tracking route now
+    // requires an authenticated session, so a server-to-server fetch would
+    // 401 — invoke the engine here instead.
+    const engine = getRankTrackingEngine();
+    await engine.loadCredentials();
 
     let totalKeywords = 0;
     let totalChecked = 0;
@@ -292,23 +297,19 @@ async function handleAutoRankCheck(supabase: ReturnType<typeof createServiceRole
         totalKeywords += keywords.length;
 
         try {
-            // Trigger rank check via internal API
-            const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/rank-tracking`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'scheduled_check',
-                    site_id: site.id,
-                    site_url: site.url,
-                    keywords: keywords.map((k: { keyword: string }) => k.keyword),
-                }),
-            });
+            const results = await engine.checkRanks(
+                site.url,
+                keywords.map((k: { keyword: string }) => k.keyword),
+                { device: 'desktop' }
+            );
 
-            if (res.ok) {
-                const data = await res.json();
-                totalChecked += data.results?.length || keywords.length;
-                siteResults.push({ site: site.name, keywords: keywords.length, checked: data.results?.length || 0 });
+            for (const result of results) {
+                const kwRecord = keywords.find((k: { keyword: string }) => k.keyword === result.keyword);
+                await engine.saveResults(site.user_id, site.id, kwRecord?.id || null, result);
             }
+
+            totalChecked += results.length;
+            siteResults.push({ site: site.name, keywords: keywords.length, checked: results.length });
         } catch (e) {
             siteResults.push({ site: site.name, keywords: keywords.length, checked: 0 });
             logger.error('Rank check failed', { route: '/api/automation', action: 'rank_check', siteId: site.id }, e);

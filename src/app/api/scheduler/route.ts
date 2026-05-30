@@ -4,14 +4,19 @@
 // Designed to be called by an external cron service every 5 minutes
 // ============================================================
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase';
+import { verifyCronAuth } from '@/lib/cron-auth';
 import { runQualityControl } from '@/lib/engines/quality-control-engine';
 
 // GET /api/scheduler - Process scheduled queue items
 // Idempotent: uses status='publishing' lock to prevent duplicate WordPress posts
-export async function GET() {
+export async function GET(req: NextRequest) {
     try {
+        // Fail-closed CRON auth — this endpoint publishes to WordPress.
+        const cronError = verifyCronAuth(req);
+        if (cronError) return cronError;
+
         const supabase = createServiceRoleClient();
         const now = new Date().toISOString();
 
