@@ -4,7 +4,6 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createServiceRoleClient } from '@/lib/supabase';
 import { getKeywordDataEngine } from '@/lib/engines/keyword-data';
 import { getAuthUser } from '@/lib/auth-guard';
 
@@ -48,6 +47,9 @@ export async function GET(request: NextRequest) {
 // POST /api/keywords - Add keywords or discover via API/AI
 export async function POST(request: NextRequest) {
     try {
+        const auth = await getAuthUser();
+        if (auth.error) return auth.error;
+
         const body = await request.json();
         const { site_id, keywords: keywordList, action } = body;
 
@@ -74,7 +76,8 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: 'keyword_ids array required' }, { status: 400 });
             }
 
-            const supabase = createServiceRoleClient();
+            // RLS-aware client scopes the select/update to the caller's keywords.
+            const supabase = auth.supabase;
             const { data: keywords } = await supabase
                 .from('keywords')
                 .select('id, keyword')
@@ -141,10 +144,24 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'site_id and keywords array required' }, { status: 400 });
         }
 
-        const supabase = createServiceRoleClient();
+        const supabase = auth.supabase;
+
+        // Verify the target site belongs to the caller (prevents inserting
+        // keywords into another user's site).
+        const { data: ownedSite } = await supabase
+            .from('sites')
+            .select('id')
+            .eq('id', site_id)
+            .eq('user_id', auth.user.id)
+            .single();
+        if (!ownedSite) {
+            return NextResponse.json({ error: 'Site not found' }, { status: 404 });
+        }
+
         const { data, error } = await supabase
             .from('keywords')
             .insert(keywordList.map((kw: { keyword: string; search_volume?: number; difficulty?: number; cpc?: number; intent_type?: string; serp_features?: string[]; priority_score?: number; cluster_id?: string; data_source?: string }) => ({
+                user_id: auth.user.id,
                 site_id,
                 keyword: kw.keyword,
                 search_volume: kw.search_volume || 0,

@@ -12,6 +12,12 @@ export interface AuthUser {
     email: string;
 }
 
+export interface AuthResult {
+    user: AuthUser;
+    supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+    error?: NextResponse;
+}
+
 /**
  * Extract the authenticated user from the request.
  * Uses a cookie-aware SSR client for both auth AND DB operations.
@@ -24,10 +30,8 @@ export interface AuthUser {
  * // Use auth.supabase for DB queries (respects RLS with user context)
  * ```
  */
-export async function getAuthUser(): Promise<
-    { user: AuthUser; supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>; error?: never } |
-    { user?: never; supabase?: never; error: NextResponse }
-> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function getAuthUser(_request?: unknown): Promise<AuthResult> {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
     // If Supabase isn't configured, skip auth
@@ -37,7 +41,7 @@ export async function getAuthUser(): Promise<
                 { error: 'Supabase not configured' },
                 { status: 401 }
             ),
-        };
+        } as unknown as AuthResult;
     }
 
     try {
@@ -52,7 +56,7 @@ export async function getAuthUser(): Promise<
                     { error: 'Authentication required' },
                     { status: 401 }
                 ),
-            };
+            } as unknown as AuthResult;
         }
 
         return {
@@ -66,6 +70,26 @@ export async function getAuthUser(): Promise<
                 { error: 'Authentication failed' },
                 { status: 401 }
             ),
-        };
+        } as unknown as AuthResult;
+    }
+}
+
+/**
+ * Check whether an authenticated user is a platform admin.
+ * Admins may read secret settings and modify the global settings store.
+ */
+export async function isAdmin(
+    supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    userId: string
+): Promise<boolean> {
+    try {
+        const { data } = await supabase
+            .from('profiles')
+            .select('is_admin')
+            .eq('id', userId)
+            .single();
+        return Boolean(data?.is_admin);
+    } catch {
+        return false;
     }
 }

@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase';
-import { getAuthUser } from '@/lib/auth-guard';
+import { getAuthUser, isAdmin } from '@/lib/auth-guard';
 
 // GET /api/settings - List all settings (authenticated)
 export async function GET(request: NextRequest) {
@@ -18,17 +18,26 @@ export async function GET(request: NextRequest) {
 
         let query = auth.supabase.from('settings').select('*').order('category').order('key');
 
-        if (category) query = query.eq('category', category);
+        // Always include ai_task_routing alongside whatever category is requested
+        if (category && category !== 'all') {
+            query = query.in('category', [category, 'ai_task_routing']);
+        }
 
         const { data: settings, error } = await query;
         if (error) throw error;
 
-        // Mask secret values for display
-        const masked = (settings || []).map(s => ({
-            ...s,
-            value: s.is_secret && s.value ? '••••••••' + s.value.slice(-4) : s.value,
-            has_value: Boolean(s.value && s.value.length > 0),
-        }));
+        const admin = await isAdmin(auth.supabase, auth.user.id);
+
+        // Secrets: admins see a masked hint (last 4 chars) so they can verify
+        // which key is set; non-admins never receive any part of a secret value.
+        const masked = (settings || []).map(s => {
+            const hasValue = Boolean(s.value && s.value.length > 0);
+            let value = s.value;
+            if (s.is_secret && hasValue) {
+                value = admin ? '••••••••' + s.value.slice(-4) : null;
+            }
+            return { ...s, value, has_value: hasValue };
+        });
 
         return NextResponse.json({ settings: masked });
     } catch (error) {
@@ -44,6 +53,12 @@ export async function POST(request: NextRequest) {
     try {
         const auth = await getAuthUser();
         if (auth.error) return auth.error;
+
+        // Settings is a global platform store (shared API keys) — only admins
+        // may write, otherwise any signed-up user could overwrite platform keys.
+        if (!(await isAdmin(auth.supabase, auth.user.id))) {
+            return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+        }
 
         const body = await request.json();
         const { updates } = body;
