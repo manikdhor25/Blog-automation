@@ -32,6 +32,17 @@ export async function GET(request: NextRequest) {
     if (view === 'clicks') {
         const linkId = searchParams.get('link_id');
         if (!linkId) return NextResponse.json({ error: 'link_id required' }, { status: 400 });
+
+        // Verify the link belongs to the caller before returning its clicks.
+        // Defense in depth alongside the RLS policy (migration 020).
+        const { data: ownLink } = await auth.supabase
+            .from('cloaked_links')
+            .select('id')
+            .eq('id', linkId)
+            .eq('user_id', auth.user.id)
+            .single();
+        if (!ownLink) return NextResponse.json({ error: 'Link not found' }, { status: 404 });
+
         const { data, error } = await auth.supabase
             .from('cloaked_link_clicks')
             .select('country, referrer, clicked_at')
