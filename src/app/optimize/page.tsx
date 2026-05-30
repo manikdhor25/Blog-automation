@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { ScoreBar, ScoreRing, Badge, StatCard, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -303,7 +304,7 @@ export default function OptimizePage() {
                                             }}
                                         >
                                             <span style={{ fontWeight: 500, fontSize: '0.875rem' }}
-                                                dangerouslySetInnerHTML={{ __html: post.title.rendered }} />
+                                                dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.title.rendered) }} />
                                             <Badge variant={post.status === 'publish' ? 'success' : 'warning'}>{post.status}</Badge>
                                         </div>
                                     ))}
@@ -319,7 +320,7 @@ export default function OptimizePage() {
                                 </div>
                                 <div style={{ marginBottom: 16, padding: 12, background: 'var(--bg-glass)', borderRadius: 'var(--radius-sm)' }}>
                                     <span className="text-sm text-muted">Selected: </span>
-                                    <span style={{ fontWeight: 600 }} dangerouslySetInnerHTML={{ __html: selectedPost.title.rendered }} />
+                                    <span style={{ fontWeight: 600 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedPost.title.rendered) }} />
                                 </div>
                                 <div className="flex gap-3" style={{ marginBottom: 16 }}>
                                     <input className="form-input" placeholder="Target keyword for this post..." value={keyword}
@@ -410,7 +411,7 @@ export default function OptimizePage() {
                                         <div className="text-sm" style={{ color: '#bdc1c6' }}>{result.content.metaDescription}</div>
                                     </div>
                                     <div style={{ maxHeight: 400, overflowY: 'auto', padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', lineHeight: 1.8 }}
-                                        dangerouslySetInnerHTML={{ __html: result.content.content }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(result.content.content) }}
                                     />
                                 </div>
                             </div>
@@ -583,7 +584,7 @@ export default function OptimizePage() {
                                                             border: '1px solid var(--border-subtle)', lineHeight: 1.8,
                                                             fontSize: '0.92rem',
                                                         }}
-                                                            dangerouslySetInnerHTML={{ __html: viewingVersion.content }}
+                                                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(viewingVersion.content) }}
                                                         />
                                                     </div>
                                                 )}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, Badge, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -191,7 +192,7 @@ export default function SyndicationPage() {
                             maxHeight: 400, overflow: 'auto', padding: 16,
                             background: 'var(--bg-glass)', borderRadius: 'var(--radius-sm)',
                             fontSize: '0.875rem', lineHeight: 1.6,
-                        }} dangerouslySetInnerHTML={{ __html: rewrittenContent.slice(0, 3000) }} />
+                        }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(rewrittenContent.slice(0, 3000)) }} />
                     </div>
                 )}
 

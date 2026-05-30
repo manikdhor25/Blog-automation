@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { Badge, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -244,7 +245,7 @@ export default function ComparisonPage() {
                                 <div>
                                     <h4 style={{ marginBottom: 12, fontWeight: 600 }}>HTML Table Preview</h4>
                                     <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 6, padding: 16 }}
-                                        dangerouslySetInnerHTML={{ __html: result.table_html }} />
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(result.table_html) }} />
                                 </div>
 
                                 {/* FAQ */}

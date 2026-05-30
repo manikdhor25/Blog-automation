@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { Badge, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -215,7 +216,7 @@ export default function ReviewGeneratorPage() {
 
                                     {previewTab === 'preview' && (
                                         <div style={{ maxHeight: 400, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 6, padding: 16 }}
-                                            dangerouslySetInnerHTML={{ __html: result.review.full_html }} />
+                                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(result.review.full_html) }} />
                                     )}
 
                                     {previewTab === 'html' && (

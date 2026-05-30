@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, Badge, ScoreRing, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -250,7 +251,7 @@ export default function OptimizedContentPage() {
                                                     border: '1px solid var(--border-subtle)', lineHeight: 1.8,
                                                     fontSize: '0.92rem',
                                                 }}
-                                                    dangerouslySetInnerHTML={{ __html: viewingVersion.content }}
+                                                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(viewingVersion.content) }}
                                                 />
                                             </div>
                                         )}

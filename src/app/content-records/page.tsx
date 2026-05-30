@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, Badge, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -896,7 +897,7 @@ export default function ContentRecordsPage() {
                                 padding: '40px 48px', border: '1px solid var(--border-subtle)',
                                 lineHeight: 1.8, fontSize: '1rem',
                             }}>
-                                <div dangerouslySetInnerHTML={{ __html: viewingContent.content_html }} />
+                                <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(viewingContent.content_html) }} />
                             </div>
                         ) : (
                             <div style={{

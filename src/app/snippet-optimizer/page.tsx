@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { Badge, EmptyState } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -147,7 +148,7 @@ export default function SnippetOptimizerPage() {
 
                                     <div style={{ marginBottom: 14 }}>
                                         <div style={{ fontWeight: 600, marginBottom: 6 }}>HTML Output</div>
-                                        <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 6, padding: 12 }} dangerouslySetInnerHTML={{ __html: result.html }} />
+                                        <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 6, padding: 12 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(result.html) }} />
                                     </div>
 
                                     <div style={{ background: 'var(--bg-secondary)', borderRadius: 6, padding: '10px 12px' }}>

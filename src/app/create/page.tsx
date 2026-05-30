@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { sanitizeHtml } from '@/lib/utils/sanitize';
 import Sidebar from '@/components/Sidebar';
 import { ScoreBar, ScoreRing, Badge } from '@/components/ui';
 import { useToast } from '@/components/Toast';
@@ -659,7 +660,7 @@ export default function CreateContentPage() {
                                     <span className="text-sm text-muted">{streamingPreview.length.toLocaleString()} chars</span>
                                 </div>
                                 <div
-                                    dangerouslySetInnerHTML={{ __html: streamingPreview }}
+                                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(streamingPreview) }}
                                     style={{ fontSize: '0.9rem', lineHeight: 1.7, opacity: 0.85 }}
                                 />
                             </div>
@@ -793,7 +794,7 @@ export default function CreateContentPage() {
                                     maxHeight: 600, overflow: 'auto', lineHeight: 1.8,
                                 }}>
                                     <div
-                                        dangerouslySetInnerHTML={{ __html: editedContent }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(editedContent) }}
                                         style={{ fontSize: '0.95rem' }}
                                     />
                                 </div>
