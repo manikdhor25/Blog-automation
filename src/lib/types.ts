@@ -146,6 +146,14 @@ export interface ContentScore {
     intent: number;
     geo: number;
     serpCorrelation: number;
+    /** #50: Passage-level quality — self-contained, rankable passages */
+    passage: number;
+    /** #51: Entity saturation — named entities, definitions, expert refs */
+    entitySaturation: number;
+    /** #52: GEO citation density — attributed claims per 1000 words */
+    citationDensity: number;
+    /** Format diversity — visual variety of content elements (callouts, pull quotes, etc.) */
+    formatDiversity: number;
     topicCoverage: number;
     missingTopics: string[];
     overall: number;
@@ -337,7 +345,7 @@ export interface QualityControlReport {
     searchIntent: string;
     targetAudience: string;
 
-    // 9 dimension scores (0-10)
+    // 10 dimension scores (0-10)
     readabilityScore: QCDimensionResult;
     humannessScore: QCDimensionResult;
     seoStructureScore: QCDimensionResult;
@@ -345,6 +353,7 @@ export interface QualityControlReport {
     semanticScore: QCDimensionResult;
     eeatScore: QCDimensionResult;
     aeoScore: QCDimensionResult;
+    geoScore: QCDimensionResult;
     valueScore: QCDimensionResult;
     competitiveScore: QCDimensionResult;
 
@@ -362,4 +371,220 @@ export interface QualityControlReport {
     // Metadata
     evaluatedAt: string;
     wordCount: number;
+}
+
+// ── Cloaked Links ─────────────────────────────────────────────
+export interface CloakedLink {
+    id: string;
+    user_id: string;
+    slug: string;
+    destination_url: string;
+    label: string;
+    program_id: string | null;
+    post_id: string | null;
+    redirect_type: 'permanent' | 'temporary';
+    nofollow: boolean;
+    sponsored: boolean;
+    geo_rules: Record<string, string> | null;
+    clicks: number;
+    is_active: boolean;
+    notes: string | null;
+    created_at: string;
+}
+
+export interface LinkMonitorAlert {
+    id: string;
+    user_id: string;
+    link_id: string;
+    link_type: 'affiliate' | 'cloaked';
+    destination_url: string;
+    http_status: number | null;
+    error: string | null;
+    status: 'ok' | 'broken' | 'redirect' | 'timeout';
+    checked_at: string;
+    resolved: boolean;
+    resolved_at: string | null;
+}
+
+// ── Products ──────────────────────────────────────────────────
+export interface Product {
+    id: string;
+    user_id: string;
+    post_id: string | null;
+    asin: string | null;
+    title: string;
+    description: string;
+    price: number | null;
+    currency: string;
+    rating: number | null;
+    review_count: number | null;
+    image_url: string | null;
+    product_url: string;
+    affiliate_url: string | null;
+    availability: 'in_stock' | 'out_of_stock' | 'unknown';
+    features: string[];
+    brand: string | null;
+    category: string | null;
+    source: 'amazon_api' | 'manual' | 'scraped';
+    fetched_at: string;
+    created_at: string;
+}
+
+// ── Comparison Tables ─────────────────────────────────────────
+export interface ComparisonTable {
+    id: string;
+    user_id: string;
+    post_id: string | null;
+    title: string;
+    keyword: string;
+    products_json: unknown[];
+    created_at: string;
+}
+
+// ── Social Posts ──────────────────────────────────────────────
+export type SocialPlatform = 'pinterest' | 'twitter' | 'linkedin';
+export type SocialPostStatus = 'published' | 'scheduled' | 'failed' | 'draft';
+
+export interface SocialPost {
+    id: string;
+    user_id: string;
+    post_id: string | null;
+    platform: SocialPlatform;
+    content: string;
+    image_url: string | null;
+    blog_url: string | null;
+    platform_post_id: string | null;
+    platform_post_url: string | null;
+    status: SocialPostStatus;
+    error: string | null;
+    scheduled_at: string | null;
+    published_at: string | null;
+    created_at: string;
+}
+
+// ── Email Capture ─────────────────────────────────────────────
+export type EmailFormStyle = 'inline' | 'popup' | 'sticky_bar' | 'slide_in';
+export type EmailProvider = 'convertkit' | 'mailchimp' | 'beehiiv' | 'aweber' | 'activecampaign';
+
+export interface EmailForm {
+    id: string;
+    user_id: string;
+    title: string;
+    description: string;
+    button_text: string;
+    fields: string[];
+    style: EmailFormStyle;
+    magnet_title: string;
+    embed_code: string;
+    subscribers: number;
+    is_active: boolean;
+    created_at: string;
+}
+
+export interface EmailSubscriber {
+    id: string;
+    user_id: string;
+    form_id: string;
+    email: string;
+    name: string | null;
+    subscribed_at: string;
+    status: 'active' | 'unsubscribed' | 'bounced';
+}
+
+// ── Trending Topics ───────────────────────────────────────────
+export type TrendingSource = 'reddit' | 'google_trends' | 'ai_predict' | 'news';
+export type TrendingStatus = 'new' | 'saved' | 'dismissed' | 'used';
+
+export interface TrendingTopic {
+    id: string;
+    user_id: string;
+    niche: string;
+    source: TrendingSource;
+    title: string;
+    trend_score: number;
+    content_angle: string;
+    keyword_opportunity: string;
+    content_type: string | null;
+    search_intent: string | null;
+    urgency: 'high' | 'medium' | 'low' | null;
+    reason: string | null;
+    geo: string;
+    timeframe: 'day' | 'week' | 'month';
+    status: TrendingStatus;
+    discovered_at: string;
+}
+
+// ── Outreach CRM ──────────────────────────────────────────────
+export type OutreachStatus = 'prospect' | 'contacted' | 'replied' | 'negotiating' | 'placed' | 'rejected' | 'ghosted';
+
+export interface OutreachProspect {
+    id: string;
+    user_id: string;
+    domain: string;
+    contact_name: string | null;
+    contact_email: string | null;
+    domain_authority: number | null;
+    niche: string | null;
+    target_keyword: string | null;
+    status: OutreachStatus;
+    notes: string | null;
+    response_notes: string | null;
+    placed_url: string | null;
+    placed_anchor: string | null;
+    placed_at: string | null;
+    created_at: string;
+    updated_at: string | null;
+}
+
+// ── Reports ───────────────────────────────────────────────────
+export type ReportType = 'seo_performance' | 'affiliate_revenue' | 'content_audit' | 'full_report';
+
+export interface Report {
+    id: string;
+    user_id: string;
+    site_id: string;
+    report_type: ReportType;
+    client_name: string;
+    date_from: string;
+    date_to: string;
+    report_data: Record<string, unknown>;
+    created_at: string;
+}
+
+// ── Ad Revenue ────────────────────────────────────────────────
+export type AdNetwork = 'adsense' | 'mediavine' | 'ezoic' | 'raptive' | 'adthrive' | 'manual';
+
+export interface AdRevenueEntry {
+    id: string;
+    user_id: string;
+    site_id: string | null;
+    network: AdNetwork;
+    date: string;
+    impressions: number;
+    clicks: number;
+    rpm: number;
+    epmv: number;
+    revenue: number;
+    sessions: number;
+    notes: string | null;
+    updated_at: string;
+}
+
+// ── User Profile (Account Management) ────────────────────────
+export interface UserProfile {
+    id: string;
+    email: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    bio: string | null;
+    timezone: string;
+    date_format: string;
+    theme: 'dark' | 'light' | 'system';
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PasswordChangeRequest {
+    current_password: string;
+    new_password: string;
 }

@@ -11,6 +11,10 @@ import { NextResponse } from 'next/server';
 const uuid = z.string().uuid();
 const keyword = z.string().min(1, 'Keyword is required').max(200, 'Keyword too long');
 const language = z.string().min(2).max(10).default('en');
+const contentTypeEnum = z.enum([
+    'article', 'review', 'how_to', 'listicle', 'comparison',
+    'alternatives', 'beginner_guide', 'problem_solution', 'case_study', 'news',
+]).default('article');
 
 
 // ── Helper: parse body or return 400 ─────────────────────────
@@ -43,6 +47,7 @@ export const ContentGenerateSchema = z.object({
     action: z.enum(['generate', 'research_only']).optional(),
     language: language.optional(),
     is_cluster: z.boolean().optional(),
+    content_type: contentTypeEnum.optional(),
 });
 
 // ── Content: Publish ─────────────────────────────────────────
@@ -72,6 +77,7 @@ export const ContentOutlineSchema = z.object({
     keyword,
     niche: z.string().max(200).optional(),
     existingPosts: z.array(z.string()).max(50).optional(),
+    content_type: contentTypeEnum.optional(),
 });
 
 // ── Backlinks ────────────────────────────────────────────────
@@ -135,4 +141,91 @@ export const AffiliatePostSchema = z.object({
     amount: z.number().min(0).optional(),
     clicks: z.number().int().min(0).optional(),
     conversions: z.number().int().min(0).optional(),
+});
+
+// ── Cloaked Links ────────────────────────────────────────────
+
+export const CloakedLinkSchema = z.object({
+    slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+    destination_url: z.string().url(),
+    label: z.string().max(200).optional(),
+    program_id: uuid.optional(),
+    post_id: uuid.optional(),
+    redirect_type: z.enum(['permanent', 'temporary']).default('permanent'),
+    nofollow: z.boolean().default(true),
+    sponsored: z.boolean().default(true),
+    geo_rules: z.record(z.string(), z.string()).optional(),
+    notes: z.string().max(1000).optional(),
+});
+
+// ── Social Publishing ────────────────────────────────────────
+
+export const SocialPublishSchema = z.object({
+    action: z.enum(['generate_content', 'publish', 'schedule', 'list', 'delete']),
+    platform: z.enum(['pinterest', 'twitter', 'linkedin', 'all']).optional(),
+    post_id: uuid.optional(),
+    blog_title: z.string().max(500).optional(),
+    blog_excerpt: z.string().max(2000).optional(),
+    blog_url: z.string().url().optional(),
+    blog_keyword: z.string().max(200).optional(),
+    niche: z.string().max(200).optional(),
+    content: z.string().max(3000).optional(),
+    image_url: z.string().optional(),
+    scheduled_at: z.string().optional(),
+    id: uuid.optional(),
+});
+
+// ── Outreach CRM ─────────────────────────────────────────────
+
+export const OutreachSchema = z.object({
+    action: z.enum(['create_prospect', 'update_status', 'generate_email', 'log_response', 'list', 'delete', 'stats']),
+    id: uuid.optional(),
+    domain: z.string().max(253).optional(),
+    contact_name: z.string().max(200).optional(),
+    contact_email: z.string().email().optional(),
+    domain_authority: z.number().min(0).max(100).optional(),
+    niche: z.string().max(200).optional(),
+    target_keyword: z.string().max(200).optional(),
+    notes: z.string().max(2000).optional(),
+    status: z.enum(['prospect', 'contacted', 'replied', 'negotiating', 'placed', 'rejected', 'ghosted']).optional(),
+    your_name: z.string().max(200).optional(),
+    your_site_url: z.string().max(500).optional(),
+    pitch_angle: z.string().max(500).optional(),
+    response_notes: z.string().max(2000).optional(),
+    placed_url: z.string().max(2048).optional(),
+    placed_anchor: z.string().max(500).optional(),
+});
+
+// ── Comparison Table ─────────────────────────────────────────
+
+export const ComparisonSchema = z.object({
+    action: z.enum(['generate', 'save', 'list', 'delete']),
+    title: z.string().max(500).optional(),
+    keyword: z.string().max(200).optional(),
+    products: z.array(z.object({
+        name: z.string(),
+        affiliate_url: z.string().optional(),
+        price: z.number().nullable().optional(),
+        rating: z.number().nullable().optional(),
+    })).min(2).max(10).optional(),
+    criteria: z.array(z.string()).max(20).optional(),
+    post_id: uuid.optional(),
+    id: uuid.optional(),
+});
+
+// ── Ad Revenue ───────────────────────────────────────────────
+
+export const AdRevenueSchema = z.object({
+    action: z.enum(['log_revenue', 'list', 'delete', 'sync_adsense', 'get_summary']),
+    network: z.enum(['adsense', 'mediavine', 'ezoic', 'raptive', 'adthrive', 'manual']).optional(),
+    site_id: uuid.optional(),
+    date: z.string().optional(),
+    impressions: z.number().int().min(0).optional(),
+    clicks: z.number().int().min(0).optional(),
+    rpm: z.number().min(0).optional(),
+    epmv: z.number().min(0).optional(),
+    revenue: z.number().min(0).optional(),
+    sessions: z.number().int().min(0).optional(),
+    notes: z.string().max(500).optional(),
+    id: uuid.optional(),
 });
