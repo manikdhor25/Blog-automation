@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
         const d = parsed.data;
 
         // Extract timestamps if present (format: 00:00 or [00:00])
-        const timestampRegex = /(?:\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*[-â€“]?\s*)(.*?)(?=(?:\[?\d{1,2}:\d{2}|\n\n|$))/gs;
+        const timestampRegex = /(?:\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*[-â€“]?\s*)([\s\S]*?)(?=(?:\[?\d{1,2}:\d{2}|\n\n|$))/g;
         const segments: Array<{ time: string; text: string }> = [];
         let match;
         while ((match = timestampRegex.exec(d.transcript)) !== null) {

@@ -9,7 +9,7 @@ const CreateSchema = z.object({
     message: z.string().min(1),
     link: z.string().optional(),
     priority: z.enum(['high', 'medium', 'low']).default('medium'),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export async function GET(req: NextRequest) {

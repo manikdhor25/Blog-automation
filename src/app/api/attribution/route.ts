@@ -129,7 +129,7 @@ export async function GET(request: NextRequest) {
         for (const link of links || []) {
             const post = link.post_id ? postMap.get(link.post_id) : null;
             if (!post?.keyword_id) continue;
-            const kw = (post as { keywords?: { keyword: string; search_volume: number; cpc: number } }).keywords;
+            const kw = (post as unknown as { keywords?: { keyword: string; search_volume: number; cpc: number } }).keywords;
             const existing = kwClicks.get(post.keyword_id) || { keyword: kw?.keyword || '', volume: kw?.search_volume || 0, clicks: 0, conversions: 0, cpc: kw?.cpc || 0 };
             existing.clicks += link.clicks || 0;
             existing.conversions += link.conversions || 0;

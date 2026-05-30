@@ -20,7 +20,7 @@ const CreateTemplateSchema = z.object({
 const GenerateBulkSchema = z.object({
     action: z.literal('generate'),
     template_id: z.string().uuid(),
-    rows: z.array(z.record(z.string())).min(1).max(50),
+    rows: z.array(z.record(z.string(), z.string())).min(1).max(50),
     auto_save_posts: z.boolean().default(true),
     site_id: z.string().uuid().optional(),
 });
@@ -30,7 +30,7 @@ const GenerateFromCsvSchema = z.object({
     niche: z.string().min(1),
     template_type: z.string(),
     title_pattern: z.string().min(1),
-    rows: z.array(z.record(z.string())).min(1).max(50),
+    rows: z.array(z.record(z.string(), z.string())).min(1).max(50),
     word_count_per_page: z.number().int().min(800).max(2000).default(800),
     auto_save_posts: z.boolean().default(true),
     site_id: z.string().uuid().optional(),

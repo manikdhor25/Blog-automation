@@ -128,8 +128,10 @@ export async function POST(req: NextRequest) {
                 priceHistory.push({ price: fresh.price, date: new Date().toISOString() });
             }
 
-            const priceChange = product.current_price && fresh.price
-                ? ((fresh.price - product.current_price) / product.current_price * 100).toFixed(1)
+            const oldPrice = Number(product.current_price);
+            const newPrice = Number(fresh.price);
+            const priceChange = oldPrice && newPrice
+                ? ((newPrice - oldPrice) / oldPrice * 100).toFixed(1)
                 : null;
 
             await supabase.from('amazon_products').update({

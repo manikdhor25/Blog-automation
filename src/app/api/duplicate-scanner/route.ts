@@ -93,7 +93,7 @@ Return JSON: { "action": "merge"|"301_redirect"|"differentiate"|"keep_both", "re
                 const { text } = await routeAI({ task: 'seo_analysis', prompt: aiPrompt, json: true });
                 try {
                     const rec = JSON.parse(text.match(/\{[\s\S]+\}/)?.[0] || '{}');
-                    dupe.ai_recommendation = rec;
+                    (dupe as { ai_recommendation?: unknown }).ai_recommendation = rec;
                 } catch { /* skip */ }
 
                 await supabase.from('duplicate_scan_results').upsert({

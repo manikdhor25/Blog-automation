@@ -24,7 +24,7 @@ async function parseFeed(feedUrl: string): Promise<Array<{ title: string; url: s
         let match;
         while ((match = itemRegex.exec(xml)) !== null && items.length < 20) {
             const item = match[1] || match[2];
-            const titleMatch = item.match(/<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>/s);
+            const titleMatch = item.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
             const linkMatch = item.match(/<link[^>]*>([^<]+)<\/link>|<link[^>]*href=["']([^"']+)["']/);
             const pubMatch = item.match(/<pubDate>(.*?)<\/pubDate>|<published>(.*?)<\/published>|<updated>(.*?)<\/updated>/);
             const descMatch = item.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>|<summary>([\s\S]*?)<\/summary>/);
