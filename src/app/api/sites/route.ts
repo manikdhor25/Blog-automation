@@ -21,7 +21,15 @@ export async function GET() {
             .order('created_at', { ascending: false });
 
         if (error) throw error;
-        return NextResponse.json({ sites: sites || [] });
+
+        // Never return the WordPress credential to the client. Strip it and
+        // expose a boolean so the UI can still show connection status.
+        const safeSites = (sites || []).map(({ app_password_encrypted, ...rest }) => ({
+            ...rest,
+            has_credentials: Boolean(app_password_encrypted && app_password_encrypted.length > 0),
+        }));
+
+        return NextResponse.json({ sites: safeSites });
     } catch (error) {
         return NextResponse.json(
             { error: error instanceof Error ? error.message : 'Failed to fetch sites' },
@@ -73,7 +81,11 @@ export async function POST(request: NextRequest) {
             .single();
 
         if (error) throw error;
-        return NextResponse.json({ site, connectionTest });
+
+        // Strip the credential from the echoed-back row.
+        const { app_password_encrypted, ...safeSite } = site;
+        void app_password_encrypted;
+        return NextResponse.json({ site: { ...safeSite, has_credentials: true }, connectionTest });
     } catch (error) {
         return NextResponse.json(
             { error: error instanceof Error ? error.message : 'Failed to add site' },
