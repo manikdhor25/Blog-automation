@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { routeAI } from '@/lib/ai/router';
 import { z } from 'zod';
@@ -153,7 +154,7 @@ ${JSON.stringify({
 })}
 </script>`;
 
-        const credentials = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+        const credentials = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
         const res = await fetch(`${site.url.replace(/\/$/, '')}/wp-json/wp/v2/pages`, {
             method: 'POST',
             headers: { Authorization: `Basic ${credentials}`, 'Content-Type': 'application/json' },

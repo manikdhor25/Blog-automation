@@ -4,7 +4,8 @@
 // Designed to be called by an external cron service every 5 minutes
 // ============================================================
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { createServiceRoleClient } from '@/lib/supabase';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { runQualityControl } from '@/lib/engines/quality-control-engine';
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest) {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Basic ${Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64')}`,
+                                'Authorization': `Basic ${Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64')}`,
                             },
                             body: JSON.stringify({
                                 title: item.title,

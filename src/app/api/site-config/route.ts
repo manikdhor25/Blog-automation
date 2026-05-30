@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
         if (!config?.robots_txt) return NextResponse.json({ error: 'Save robots.txt first' }, { status: 400 });
 
         // Push to WordPress via REST API
-        const credentials = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+        const credentials = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
         const wpUrl = site.url.replace(/\/$/, '');
 
         try {

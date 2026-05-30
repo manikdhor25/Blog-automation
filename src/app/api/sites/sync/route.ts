@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { logger } from '@/lib/logger';
 
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
 
         // Fetch posts from WordPress REST API
         const wpUrl = site.url.replace(/\/$/, '');
-        const authHeader = 'Basic ' + Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+        const authHeader = 'Basic ' + Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
 
         const postsRes = await fetch(`${wpUrl}/wp-json/wp/v2/posts?per_page=100&status=publish,draft`, {
             headers: { Authorization: authHeader },

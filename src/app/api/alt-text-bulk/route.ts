@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { routeAI } from '@/lib/ai/router';
 import { z } from 'zod';
@@ -149,7 +150,7 @@ export async function POST(request: NextRequest) {
         if (post?.site_id && post?.wp_post_id) {
             const { data: site } = await auth.supabase.from('sites').select('url, username, app_password_encrypted').eq('id', post.site_id).single();
             if (site) {
-                const credentials = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+                const credentials = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
                 await fetch(`${site.url.replace(/\/$/, '')}/wp-json/wp/v2/posts/${post.wp_post_id}`, {
                     method: 'PUT',
                     headers: { Authorization: `Basic ${credentials}`, 'Content-Type': 'application/json' },

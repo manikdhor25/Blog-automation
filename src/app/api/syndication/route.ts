@@ -3,7 +3,8 @@
 // Repurpose content across sites with AI uniqueness rewriting
 // ============================================================
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { createServiceRoleClient } from '@/lib/supabase';
 import { getAIRouter } from '@/lib/ai/router';
 import { getAuthUser } from '@/lib/auth-guard';
@@ -94,7 +95,7 @@ Return the rewritten HTML content only, no explanation.`;
             if (targetSite.username && targetSite.app_password_encrypted) {
                 try {
                     const wpApiUrl = `${targetSite.url.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-                    const auth = Buffer.from(`${targetSite.username}:${targetSite.app_password_encrypted}`).toString('base64');
+                    const auth = Buffer.from(`${targetSite.username}:${decryptSecret(targetSite.app_password_encrypted)}`).toString('base64');
 
                     const wpRes = await fetch(wpApiUrl, {
                         method: 'POST',

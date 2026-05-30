@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 import { routeAI } from '@/lib/ai/router';
@@ -33,7 +34,7 @@ const GenerateReplySchema = z.object({
 });
 
 async function wpRequest(site: { url: string; username: string; app_password_encrypted: string }, path: string, method = 'GET', body?: unknown) {
-    const auth = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+    const auth = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
     const res = await fetch(`${site.url}/wp-json/wp/v2${path}`, {
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${auth}` },

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 import { routeAI } from '@/lib/ai/router';
@@ -203,7 +204,7 @@ Return JSON: {
             if (site?.url && site?.username && site?.app_password_encrypted) {
                 const wpRes = await fetch(`${site.url}/wp-json/wp/v2/posts`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64')}` },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64')}` },
                     body: JSON.stringify({ title: postData.title, content: postData.content, slug: postData.slug, status: 'draft', meta: { _yoast_wpseo_focuskw: targetKeyword, _yoast_wpseo_metadesc: postData.meta_description } }),
                 });
                 if (wpRes.ok) {

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createWordPressClient } from '@/lib/wordpress/client';
 import { SiteFormData } from '@/lib/types';
 import { getAuthUser } from '@/lib/auth-guard';
+import { encryptSecret } from '@/lib/crypto';
 
 // GET /api/sites - List sites for current user
 export async function GET() {
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
                 name: body.name,
                 url: body.url.replace(/\/$/, ''),
                 username: body.username,
-                app_password_encrypted: body.app_password,
+                app_password_encrypted: encryptSecret(body.app_password),
                 niche: body.niche || '',
             })
             .select()

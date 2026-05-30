@@ -3,7 +3,8 @@
 // Handles: auto-publish, auto-rank-check, auto-decay-scan
 // ============================================================
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { createServiceRoleClient } from '@/lib/supabase';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
@@ -173,7 +174,7 @@ async function handleAutoPublish(supabase: ReturnType<typeof createServiceRoleCl
 
             // Publish to WordPress
             const wpUrl = `${site.url.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-            const auth = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+            const auth = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
 
             const wpRes = await fetch(wpUrl, {
                 method: 'POST',

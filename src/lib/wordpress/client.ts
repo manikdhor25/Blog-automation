@@ -4,7 +4,8 @@
 // ============================================================
 
 import { WPPost, WPCategory, Site } from '../types';
-
+
+import { decryptSecret } from '@/lib/crypto';
 export class WordPressClient {
     private site: Site;
     private baseUrl: string;
@@ -13,7 +14,7 @@ export class WordPressClient {
     constructor(site: Site) {
         this.site = site;
         this.baseUrl = `${site.url.replace(/\/$/, '')}/wp-json/wp/v2`;
-        this.authHeader = 'Basic ' + Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+        this.authHeader = 'Basic ' + Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
     }
 
     // Test WordPress connection

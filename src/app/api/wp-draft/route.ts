@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { decryptSecret } from '@/lib/crypto';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
         const { data: site } = await auth.supabase.from('sites').select('url, username, app_password_encrypted').eq('id', siteId).single();
         if (!site) throw new Error('Site not found');
 
-        const credentials = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+        const credentials = Buffer.from(`${site.username}:${decryptSecret(site.app_password_encrypted)}`).toString('base64');
         const result = await pushToWP(
             site.url, credentials,
             post.title, post.content_html,
