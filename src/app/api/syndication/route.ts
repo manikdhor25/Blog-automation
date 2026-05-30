@@ -91,10 +91,10 @@ Return the rewritten HTML content only, no explanation.`;
             let wpUrl: string | null = null;
 
             // Publish to WordPress if credentials available
-            if (targetSite.wp_username && targetSite.wp_app_password) {
+            if (targetSite.username && targetSite.app_password_encrypted) {
                 try {
                     const wpApiUrl = `${targetSite.url.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-                    const auth = Buffer.from(`${targetSite.wp_username}:${targetSite.wp_app_password}`).toString('base64');
+                    const auth = Buffer.from(`${targetSite.username}:${targetSite.app_password_encrypted}`).toString('base64');
 
                     const wpRes = await fetch(wpApiUrl, {
                         method: 'POST',
@@ -130,7 +130,7 @@ Return the rewritten HTML content only, no explanation.`;
                     content,
                     canonical_url: canonical_url || null,
                     wp_post_id: wpPostId,
-                    wp_url: wpUrl,
+                    url: wpUrl,
                     status: wpPostId ? 'published_draft' : 'pending',
                     uniqueness_score: 0, // Calculated later
                 })

@@ -110,7 +110,7 @@ async function handleAutoPublish(supabase: ReturnType<typeof createServiceRoleCl
 
             // Get site WordPress credentials
             const { data: site } = await supabase.from('sites').select('*').eq('id', item.site_id).single();
-            if (!site || !site.url || !site.wp_username || !site.wp_app_password) {
+            if (!site || !site.url || !site.username || !site.app_password_encrypted) {
                 await supabase.from('content_queue')
                     .update({ status: 'failed', updated_at: now })
                     .eq('id', item.id);
@@ -173,7 +173,7 @@ async function handleAutoPublish(supabase: ReturnType<typeof createServiceRoleCl
 
             // Publish to WordPress
             const wpUrl = `${site.url.replace(/\/$/, '')}/wp-json/wp/v2/posts`;
-            const auth = Buffer.from(`${site.wp_username}:${site.wp_app_password}`).toString('base64');
+            const auth = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
 
             const wpRes = await fetch(wpUrl, {
                 method: 'POST',
@@ -204,7 +204,7 @@ async function handleAutoPublish(supabase: ReturnType<typeof createServiceRoleCl
                     content: publishContent,
                     keyword: item.keyword,
                     wp_post_id: wpPost.id,
-                    wp_url: wpPost.link,
+                    url: wpPost.link,
                     slug: seoSlug,
                     status: 'published',
                     score: item.score || 0,

@@ -32,9 +32,9 @@ const GenerateReplySchema = z.object({
     tone: z.enum(['friendly', 'professional', 'helpful']).default('friendly'),
 });
 
-async function wpRequest(site: { wp_url: string; wp_username: string; wp_app_password: string }, path: string, method = 'GET', body?: unknown) {
-    const auth = Buffer.from(`${site.wp_username}:${site.wp_app_password}`).toString('base64');
-    const res = await fetch(`${site.wp_url}/wp-json/wp/v2${path}`, {
+async function wpRequest(site: { url: string; username: string; app_password_encrypted: string }, path: string, method = 'GET', body?: unknown) {
+    const auth = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
+    const res = await fetch(`${site.url}/wp-json/wp/v2${path}`, {
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${auth}` },
         body: body ? JSON.stringify(body) : undefined,
@@ -55,8 +55,8 @@ export async function POST(req: NextRequest) {
         if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
         const d = parsed.data;
 
-        const { data: site } = await supabase.from('sites').select('wp_url, wp_username, wp_app_password').eq('id', d.site_id).eq('user_id', user.id).single();
-        if (!site?.wp_url) return NextResponse.json({ error: 'Site not connected to WordPress' }, { status: 400 });
+        const { data: site } = await supabase.from('sites').select('url, username, app_password_encrypted').eq('id', d.site_id).eq('user_id', user.id).single();
+        if (!site?.url) return NextResponse.json({ error: 'Site not connected to WordPress' }, { status: 400 });
 
         const statusParam = d.status === 'all' ? '' : `&status=${d.status}`;
         const comments = await wpRequest(site, `/comments?per_page=${d.per_page}${statusParam}&_embed`);
@@ -69,8 +69,8 @@ export async function POST(req: NextRequest) {
         if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
         const d = parsed.data;
 
-        const { data: site } = await supabase.from('sites').select('wp_url, wp_username, wp_app_password').eq('id', d.site_id).eq('user_id', user.id).single();
-        if (!site?.wp_url) return NextResponse.json({ error: 'Site not connected' }, { status: 400 });
+        const { data: site } = await supabase.from('sites').select('url, username, app_password_encrypted').eq('id', d.site_id).eq('user_id', user.id).single();
+        if (!site?.url) return NextResponse.json({ error: 'Site not connected' }, { status: 400 });
 
         await wpRequest(site, `/comments/${d.comment_id}`, 'POST', { status: d.new_status });
         return NextResponse.json({ moderated: true, new_status: d.new_status });
@@ -81,8 +81,8 @@ export async function POST(req: NextRequest) {
         if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
         const d = parsed.data;
 
-        const { data: site } = await supabase.from('sites').select('wp_url, wp_username, wp_app_password').eq('id', d.site_id).eq('user_id', user.id).single();
-        if (!site?.wp_url) return NextResponse.json({ error: 'Site not connected' }, { status: 400 });
+        const { data: site } = await supabase.from('sites').select('url, username, app_password_encrypted').eq('id', d.site_id).eq('user_id', user.id).single();
+        if (!site?.url) return NextResponse.json({ error: 'Site not connected' }, { status: 400 });
 
         const newComment = await wpRequest(site, '/comments', 'POST', { post: d.post_id, parent: d.comment_id, content: d.reply_content, status: 'approve' });
         return NextResponse.json({ replied: true, comment: newComment });

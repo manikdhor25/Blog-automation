@@ -199,11 +199,11 @@ Return JSON: {
 
         // Auto-publish to WP if enabled
         if (d.auto_publish) {
-            const { data: site } = await supabase.from('sites').select('wp_url,wp_username,wp_app_password').eq('id', d.site_id).single();
-            if (site?.wp_url && site?.wp_username && site?.wp_app_password) {
-                const wpRes = await fetch(`${site.wp_url}/wp-json/wp/v2/posts`, {
+            const { data: site } = await supabase.from('sites').select('url,username,app_password_encrypted').eq('id', d.site_id).single();
+            if (site?.url && site?.username && site?.app_password_encrypted) {
+                const wpRes = await fetch(`${site.url}/wp-json/wp/v2/posts`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${Buffer.from(`${site.wp_username}:${site.wp_app_password}`).toString('base64')}` },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64')}` },
                     body: JSON.stringify({ title: postData.title, content: postData.content, slug: postData.slug, status: 'draft', meta: { _yoast_wpseo_focuskw: targetKeyword, _yoast_wpseo_metadesc: postData.meta_description } }),
                 });
                 if (wpRes.ok) {

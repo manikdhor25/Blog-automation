@@ -60,11 +60,11 @@ export async function GET(req: NextRequest) {
                 if (item.site_id) {
                     const { data: site } = await supabase
                         .from('sites')
-                        .select('url, wp_username, wp_app_password')
+                        .select('url, username, app_password_encrypted')
                         .eq('id', item.site_id)
                         .single();
 
-                    if (site?.wp_username && site?.wp_app_password) {
+                    if (site?.username && site?.app_password_encrypted) {
                         // QC Gate: Check content quality before publishing
                         if (item.keyword && item.content) {
                             try {
@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Basic ${Buffer.from(`${site.wp_username}:${site.wp_app_password}`).toString('base64')}`,
+                                'Authorization': `Basic ${Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64')}`,
                             },
                             body: JSON.stringify({
                                 title: item.title,

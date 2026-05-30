@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
                     const site = post.sites;
                     try {
                         const wpUrl = `${site.url.replace(/\/$/, '')}/wp-json/wp/v2/posts/${post.wp_post_id}`;
-                        const auth = Buffer.from(`${site.wp_username}:${site.wp_app_password}`).toString('base64');
+                        const auth = Buffer.from(`${site.username}:${site.app_password_encrypted}`).toString('base64');
                         await fetch(wpUrl, {
                             method: 'PUT',
                             headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
