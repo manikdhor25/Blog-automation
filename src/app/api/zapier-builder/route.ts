@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
         };
 
         try {
-            const res = await fetch(webhook.webhook_url, {
+            const res = await safeFetch(webhook.webhook_url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(webhook.custom_headers || {}) },
                 body: JSON.stringify(testPayload),
@@ -132,7 +133,7 @@ export async function fireWebhookEvent(userId: string, event: string, data: Reco
     for (const webhook of webhooks || []) {
         const payload = { event, source: 'RankMaster Pro', timestamp: new Date().toISOString(), data };
         try {
-            const res = await fetch(webhook.webhook_url, {
+            const res = await safeFetch(webhook.webhook_url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...(webhook.custom_headers || {}) },
                 body: JSON.stringify(payload),

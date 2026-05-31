@@ -48,6 +48,7 @@ export default function AccountPage() {
     const [saving, setSaving] = useState(false);
 
     // Password form state
+    const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [changingPassword, setChangingPassword] = useState(false);
@@ -163,12 +164,18 @@ export default function AccountPage() {
             return;
         }
 
+        if (!currentPassword) {
+            toast.error('Enter your current password');
+            return;
+        }
+
         setChangingPassword(true);
-        const result = await changePassword(newPassword);
+        const result = await changePassword(currentPassword, newPassword);
         setChangingPassword(false);
 
         if (result.success) {
             toast.success('Password updated successfully!');
+            setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
         } else {
@@ -413,6 +420,18 @@ export default function AccountPage() {
 
                             <form onSubmit={handleChangePassword}>
                                 <div className="form-group">
+                                    <label className="form-label">Current Password</label>
+                                    <input
+                                        type="password"
+                                        className="form-input"
+                                        placeholder="Enter current password"
+                                        value={currentPassword}
+                                        onChange={e => setCurrentPassword(e.target.value)}
+                                        autoComplete="current-password"
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
                                     <label className="form-label">New Password</label>
                                     <input
                                         type="password"
@@ -421,6 +440,7 @@ export default function AccountPage() {
                                         value={newPassword}
                                         onChange={e => setNewPassword(e.target.value)}
                                         minLength={8}
+                                        autoComplete="new-password"
                                         required
                                     />
                                     {newPassword && (

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
 
                 // Fire webhook if configured
                 if (alert.notify_webhook && alert.webhook_url) {
-                    await fetch(alert.webhook_url, {
+                    await safeFetch(alert.webhook_url, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ alert_type: alert.alert_type, keyword: d.keyword, position: d.current_position, message }),
                     }).catch(() => { });

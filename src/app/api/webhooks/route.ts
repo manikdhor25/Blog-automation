@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthUser } from '@/lib/auth-guard';
+import { safeFetch, validatePublicUrl } from '@/lib/utils/safe-url';
 
 // GET /api/webhooks — List configured webhooks
 export async function GET() {
@@ -54,7 +55,8 @@ export async function POST(req: NextRequest) {
                 data: { message: 'Test webhook from RankMaster Pro' },
             };
             try {
-                const res = await fetch(testUrl, {
+                // SSRF guard — never POST a test to an internal address.
+                const res = await safeFetch(testUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -69,6 +71,12 @@ export async function POST(req: NextRequest) {
         // Create webhook
         if (!url || !name) {
             return NextResponse.json({ error: 'url and name required' }, { status: 400 });
+        }
+
+        // Reject internal/private URLs so webhook deliveries can't be used for SSRF.
+        const urlCheck = await validatePublicUrl(url);
+        if (!urlCheck.ok) {
+            return NextResponse.json({ error: `Invalid webhook URL: ${urlCheck.reason}` }, { status: 400 });
         }
 
         const { data, error } = await auth.supabase

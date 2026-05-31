@@ -14,11 +14,25 @@ export async function PUT(request: NextRequest) {
 
     try {
         const body = await request.json();
-        const { new_password } = body;
+        const { current_password, new_password } = body;
 
         // Validate new password
         if (!new_password || typeof new_password !== 'string') {
             return NextResponse.json({ error: 'New password is required' }, { status: 400 });
+        }
+
+        // Require the current password and verify it, so a stolen/borrowed
+        // session cannot silently take over the account by changing the
+        // password without knowing the existing one.
+        if (!current_password || typeof current_password !== 'string') {
+            return NextResponse.json({ error: 'Current password is required' }, { status: 400 });
+        }
+        const { error: verifyError } = await supabase.auth.signInWithPassword({
+            email: auth.user.email,
+            password: current_password,
+        });
+        if (verifyError) {
+            return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
         }
 
         if (new_password.length < 8) {

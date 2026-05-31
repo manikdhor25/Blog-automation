@@ -89,12 +89,12 @@ export function useProfile() {
     /**
      * Change password
      */
-    const changePassword = async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    const changePassword = async (currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
         try {
             const res = await fetch('/api/user/password', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ new_password: newPassword }),
+                body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
             });
 
             const body = await res.json();
