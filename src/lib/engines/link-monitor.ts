@@ -3,6 +3,8 @@
 // Crawls all affiliate links and checks HTTP status
 // ============================================================
 
+import { validatePublicUrl } from '../utils/safe-url';
+
 export interface LinkCheckResult {
     id: string;
     slug?: string;
@@ -56,6 +58,14 @@ async function checkUrl(url: string, timeoutMs = 8000): Promise<{
 
     try {
         for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            // SSRF guard — validate each hop (initial URL and every redirect
+            // target) before connecting.
+            const safe = await validatePublicUrl(currentUrl);
+            if (!safe.ok) {
+                clearTimeout(timer);
+                return { httpStatus: null, finalUrl: currentUrl, redirectChain, responseTimeMs: Date.now() - start, error: `Blocked: ${safe.reason}` };
+            }
+
             let res = await doFetch(currentUrl, 'HEAD');
 
             // Some hosts reject HEAD — retry the same URL with GET.

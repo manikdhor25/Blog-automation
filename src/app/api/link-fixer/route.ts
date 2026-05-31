@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { routeAI } from '@/lib/ai/router';
 import { z } from 'zod';
@@ -39,7 +40,7 @@ function extractOutboundLinks(html: string, siteUrl: string): Array<{ url: strin
 
 async function checkLinkStatus(url: string): Promise<{ status: number | null; ok: boolean; final_url: string | null; error: string | null }> {
     try {
-        const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' } });
+        const res = await safeFetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' } });
         return { status: res.status, ok: res.status < 400, final_url: res.url || url, error: null };
     } catch (err) {
         return { status: null, ok: false, final_url: null, error: err instanceof Error ? err.message : 'Failed' };

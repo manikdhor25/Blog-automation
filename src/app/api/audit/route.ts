@@ -4,7 +4,8 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-
+
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 
 interface AuditIssue {
@@ -199,7 +200,7 @@ export async function POST(request: NextRequest) {
         for (const url of sitemapUrls.slice(0, 5)) {
             checks.total++;
             try {
-                const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
+                const res = await safeFetch(url, { method: 'HEAD', signal: AbortSignal.timeout(10000) });
                 if (res.ok) {
                     checks.passed++;
                 } else {

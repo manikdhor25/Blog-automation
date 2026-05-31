@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { routeAI } from '@/lib/ai/router';
 import { z } from 'zod';
@@ -21,7 +22,7 @@ const Schema = z.object({
 
 async function scrapeCompetitorContent(url: string): Promise<{ title: string; text: string; headings: string[] }> {
     try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' }, signal: AbortSignal.timeout(10000) });
+        const res = await safeFetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' }, signal: AbortSignal.timeout(10000) });
         const html = await res.text();
         const title = html.match(/<title[^>]*>(.*?)<\/title>/i)?.[1]?.trim() || '';
         const headings = (html.match(/<h[1-3][^>]*>(.*?)<\/h[1-3]>/gi) || []).map(h => h.replace(/<[^>]+>/g, '').trim());

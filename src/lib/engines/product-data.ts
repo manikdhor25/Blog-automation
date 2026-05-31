@@ -4,6 +4,7 @@
 // ============================================================
 
 import { createHash, createHmac } from 'crypto';
+import { safeFetch } from '../utils/safe-url';
 
 export interface ProductData {
     asin?: string;
@@ -162,7 +163,7 @@ export async function fetchAmazonProduct(
 // AI-powered product data extraction from URL (fallback)
 export async function extractProductFromUrl(url: string): Promise<Partial<ProductData>> {
     try {
-        const res = await fetch(url, {
+        const res = await safeFetch(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' },
             signal: AbortSignal.timeout(8000),
         });

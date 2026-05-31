@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -13,7 +14,7 @@ async function checkUrl(url: string): Promise<{ status: number; ok: boolean; red
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(url, {
+        const res = await safeFetch(url, {
             method: 'HEAD',
             redirect: 'follow',
             signal: controller.signal,

@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -16,7 +17,7 @@ const Schema = z.object({
 
 async function checkExistingCanonical(url: string): Promise<{ canonical: string | null; matches_self: boolean }> {
     try {
-        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' }, signal: AbortSignal.timeout(8000) });
+        const res = await safeFetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' }, signal: AbortSignal.timeout(8000) });
         const html = await res.text();
         const canonicalMatch = html.match(/<link[^>]*rel="canonical"[^>]*href="([^"]+)"/i);
         const canonical = canonicalMatch?.[1] || null;

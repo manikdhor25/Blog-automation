@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { routeAI } from '@/lib/ai/router';
 import { z } from 'zod';
@@ -16,7 +17,7 @@ const Schema = z.object({
 });
 
 async function fetchAndParseUrl(url: string) {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0)' },
         signal: AbortSignal.timeout(15000),
     });

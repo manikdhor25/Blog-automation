@@ -4,6 +4,7 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
+import { safeFetch } from '@/lib/utils/safe-url';
 import { getAuthUser } from '@/lib/auth-guard';
 import { z } from 'zod';
 
@@ -18,7 +19,7 @@ const Schema = z.object({
 
 async function fetchRSSFeed(url: string): Promise<Array<{ title: string; link: string; published: string; summary: string }>> {
     try {
-        const res = await fetch(url, {
+        const res = await safeFetch(url, {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RankMaster/1.0; +https://rankmaster.pro)' },
             signal: AbortSignal.timeout(10000),
         });
@@ -65,7 +66,7 @@ async function guessRSSUrl(domain: string): Promise<string | null> {
 
     for (const url of candidates) {
         try {
-            const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(3000) });
+            const res = await safeFetch(url, { method: 'HEAD', signal: AbortSignal.timeout(3000) });
             const ct = res.headers.get('content-type') || '';
             if (res.ok && (ct.includes('xml') || ct.includes('rss') || ct.includes('atom'))) return url;
         } catch { /* continue */ }
